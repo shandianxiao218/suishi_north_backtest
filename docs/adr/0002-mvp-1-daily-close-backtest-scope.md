@@ -1,118 +1,162 @@
-# ADR-0002: MVP-1 daily close backtest scope and tunable parameters
+# ADR-0002：MVP-1 日线收盘级回测范围与可优化参数
 
-## Status
+## 状态
 
-Accepted for MVP-1
+MVP-1 已接受
 
-## Context
+## 背景
 
-The first phase of the 随势向北 backtest system is intended to validate strategy effectiveness before aggressive parameter optimization.
+`随势向北` 回测系统第一阶段目标是先验证策略有效性，而不是直接做激进参数优化。
 
-The full trading system uses weekly direction, daily ABCD structure, and 60-minute current-trend reversal. MVP-1 intentionally uses a daily-close-level proxy so the project can first validate whether the daily C-point structure has statistical edge before implementing minute-level execution.
+完整交易系统使用：
 
-## Decision
+- 周线判断大级别方向
+- 日线定义 ABCD 结构和 C 点候选
+- 60 分钟确认当前走势转向和入场触发
 
-MVP-1 will run as a daily-close-level structural backtest.
+MVP-1 暂时采用日线收盘级代理规则，先验证日线 C 点结构是否具有统计优势。分钟级执行回测放到 MVP-2。
 
-### Primary goal
+## 决策
 
-Validate strategy effectiveness first. Parameter optimization is deferred.
+MVP-1 采用日线收盘级结构回测。
 
-### Universe
+### 第一目标
 
-MVP-1 uses the core沪深 A-share universe:
+先验证策略有效性，参数优化延后。
 
-- Include: main board, ChiNext, STAR Market.
-- Exclude: Beijing Stock Exchange for MVP-1.
-- Exclude: ST, *ST, delisting-board stocks.
-- Exclude: long suspensions.
-- Exclude: stocks listed for fewer than 120 trading days.
-- Exclude: low-liquidity stocks.
-- Record MVP-1 survivorship-bias limitations explicitly in reports.
+### 股票池
 
-### Data granularity
+MVP-1 使用沪深 A 股核心股票池：
 
-MVP-1 uses:
+- 纳入：主板、创业板、科创板。
+- 暂不纳入：北交所。
+- 排除：ST、*ST、退市整理股票。
+- 排除：长期停牌股票。
+- 排除：上市不足 120 个交易日的新股。
+- 排除：低流动性股票。
+- 回测报告必须明确标注 MVP-1 存在幸存者偏差限制。
 
-- Weekly bars for direction filtering.
-- Daily bars for AB, BC, C-point proxy, signal generation, and exits.
+### 数据颗粒度
 
-MVP-2 may add 60-minute bars for true current-trend reversal and entry simulation.
+MVP-1 使用：
 
-### Entry execution
+- 周线：方向过滤。
+- 日线：AB、BC、C 点代理、信号生成和退出。
 
-- Signal is generated after the close of day T.
-- Only data available on or before day T may be used.
-- Entry is attempted at T+1 open.
-- If T+1 is suspended, has no open price, or is one-word limit-up and cannot be bought, skip the trade.
-- Position sizing and stops are calculated from actual entry price.
+MVP-2 可加入 60 分钟 K 线，用于真实当前走势转向和入场模拟。
 
-### Daily proxy C-point rules
+### 买入执行
 
-MVP-1 uses daily stop-falling/turning-strong behavior as a proxy for the full system's 60-minute current-trend reversal.
+- T 日收盘后生成信号。
+- 只能使用 T 日及以前可获得的数据。
+- T+1 交易日开盘尝试买入。
+- 如果 T+1 停牌、无开盘价、一字涨停无法买入，则跳过该交易。
+- 仓位和止损按实际买入价计算。
 
-Default rules:
+### 日线代理 C 点规则
 
-- AB rise: A to B rise must be at least 20%.
-- BC retracement: B to C retracement must not exceed 60% of the AB gain.
-- C-point window: C forms 3-20 trading days after B.
-- Stop-falling signal: close above MA5, or two consecutive closes without making a new closing low.
-- Volume contraction during BC is a scoring feature in MVP-1, not a hard filter.
-- Signal-day close must be no more than 8% above the C-point low.
-- Weekly filter: weekly direction is not weak, or price is at least above the 20-week moving average.
-- Annual moving-average filter: exclude long-term weak structures below the annual moving average.
+MVP-1 用日线止跌转强行为代理完整系统中的 60 分钟当前走势转向。
 
-### Main-theme proxy
+默认规则：
 
-MVP-1 uses second-level industry turnover ranking as a mechanical main-theme proxy.
+- AB 涨幅：A 到 B 至少上涨 20%。
+- BC 回撤：B 到 C 回撤不超过 AB 涨幅的 60%。
+- C 点窗口：C 在 B 后 3-20 个交易日内形成。
+- 止跌转强信号：收盘价站上 5 日均线，或连续 2 日收盘价不创新低。
+- BC 阶段量能收缩在 MVP-1 中作为评分项，不作为硬过滤。
+- 信号日收盘价距离 C 点低点不超过 8%。
+- 周线过滤：周线方向不弱，或至少站上 20 周线。
+- 年线过滤：排除年线以下的长期弱结构。
 
-- Strong main line: a second-level industry ranks top 5 by turnover for 3 consecutive trading days.
-- Observation main line: a second-level industry ranks top 5 by turnover at least 3 times in the latest 5 trading days.
-- Start day: a second-level industry enters top 5 for the first time; record it, but do not treat it as a confirmed hard-filter main line.
+### 主线代理
 
-The MVP-1 hard-filter main-line track uses the strong-main-line definition.
+MVP-1 使用二级行业成交金额排名作为机械化主线代理。
 
-### Backtest tracks
+- 强主线：某二级行业成交金额连续 3 个交易日进入前 5 名。
+- 观察主线：某二级行业成交金额在最近 5 个交易日内至少 3 次进入前 5 名。
+- 启动日：某二级行业首次进入前 5 名；仅记录，不作为已确认主线硬过滤。
 
-MVP-1 should report at least two tracks:
+MVP-1 的主线过滤轨使用“强主线”定义。
 
-1. Pure structure track: weekly + daily ABCD + C-point proxy, without main-theme filter.
-2. Main-line-filtered track: pure structure track plus strong second-level-industry turnover main-line filter.
+### 回测轨道
 
-### Exit rules
+MVP-1 至少输出两条轨道：
 
-- Structural stop: break below the C-point low.
-- Emergency stop: -5% from actual entry.
-- Time stop: exit if no floating profit appears within 3 trading days after entry.
-- First target: reaching B point or 2R is recorded as first-target achieved, but does not force full exit in MVP-1.
-- Trend exit: exit when close falls at least 8% from the highest close since entry.
-- Hard maximum holding period: 30 trading days.
-- Exit at next trading day's open after the exit signal.
-- If suspended or one-word limit-down and not sellable, defer exit until executable.
-- If multiple exit signals occur on the same day, apply conservative priority: structural/emergency stop, then time stop, then trend exit, then hard maximum holding period.
+1. 纯结构轨：周线 + 日线 ABCD + C 点代理，不使用主线过滤。
+2. 主线过滤轨：纯结构轨 + 二级行业成交金额强主线过滤。
 
-### Tunable parameters for future optimization
+### 退出规则
 
-These MVP-1 defaults are intentionally recorded as tunable parameters:
+- 结构止损：跌破 C 点低点。
+- 应急止损：从实际买入价下跌 5%。
+- 时间止损：买入后 3 个交易日内没有出现浮盈则退出。
+- 第一目标：触及 B 点或 2R 时记录为第一目标达成，但 MVP-1 不强制全仓卖出。
+- 趋势退出：收盘价从持仓以来最高收盘价回撤至少 8% 时退出。
+- 硬最大持仓：30 个交易日。
+- 卖出执行：退出信号出现后的下一个交易日开盘卖出。
+- 如果停牌或一字跌停无法卖出，则顺延到可执行日。
+- 同日多个退出信号同时出现时，采用保守优先级：结构/应急止损、时间止损、趋势退出、硬最大持仓。
 
-| Parameter | MVP-1 default |
+### 策略有效性评价指标
+
+MVP-1 不以单一收益率判断策略有效。
+
+有效性判断分为三组指标：
+
+#### 结构有效性
+
+| 指标 | 判断目的 |
+|---|---|
+| 入场后 5 日最大有利波动 MFE | C 点结构是否带来短期正向空间 |
+| 入场后 10 日最大有利波动 MFE | C 点结构是否具备阶段延续性 |
+| 第一目标达成率 | 是否经常回到 B 点或达到 2R |
+| 相对随机入场优势 | 排除单纯市场上涨导致的假优势 |
+
+#### 交易绩效
+
+| 指标 | MVP-1 参考门槛 |
 |---|---:|
-| Minimum AB rise | 20% |
-| Maximum BC retracement | 60% of AB gain |
-| C-point window after B | 3-20 trading days |
-| Maximum distance above C-point low on signal day | 8% |
-| Emergency stop | -5% |
-| Time stop | 3 trading days without floating profit |
-| Trend exit drawdown from highest close | 8% |
-| Hard maximum holding period | 30 trading days |
-| Main-line confirmation | second-level industry turnover top 5 for 3 consecutive trading days |
-| Observation main-line confirmation | top 5 at least 3 times in latest 5 trading days |
-| Newly listed stock exclusion | fewer than 120 trading days |
+| 胜率 | 不单独作为核心，但应尽量高于 45% |
+| 平均盈亏比 | 大于 1.2 |
+| Profit Factor | 大于 1.2 |
+| 收益回撤比 | 越高越好，需与基准对比 |
+| 单笔收益分布 | 避免只依赖极少数异常大赚样本 |
 
-## Consequences
+#### 稳健性
 
-MVP-1 can validate the structural edge of the daily C-point setup without waiting for minute-level execution modeling.
+| 指标 | 判断目的 |
+|---|---|
+| 分年度表现 | 不能只靠单一年份贡献收益 |
+| 分市场环境表现 | 区分强市、震荡市、弱市 |
+| 样本内 / 样本外表现 | 参数不能只在样本内有效 |
+| 主线过滤轨 vs 纯结构轨 | 主线过滤后应改善胜率、盈亏比或回撤 |
 
-The system must clearly label MVP-1 results as daily-proxy research results, not full-system live-trading results.
+策略有效的工作定义：
 
-Future optimization should compare out-of-sample performance before accepting any parameter change.
+> C 点结构在多数市场环境中带来正向 MFE，并且主线过滤能改善交易质量；而不是单纯追求最高年化收益。
+
+### 后续可优化参数
+
+以下 MVP-1 默认值均记录为后续可优化参数：
+
+| 参数 | MVP-1 默认值 |
+|---|---:|
+| AB 最小涨幅 | 20% |
+| BC 最大回撤 | AB 涨幅的 60% |
+| B 后 C 点窗口 | 3-20 个交易日 |
+| 信号日收盘价距离 C 点低点最大幅度 | 8% |
+| 应急止损 | -5% |
+| 时间止损 | 3 个交易日无浮盈 |
+| 最高收盘价回撤退出 | 8% |
+| 硬最大持仓 | 30 个交易日 |
+| 主线确认 | 二级行业成交金额连续 3 日前 5 |
+| 观察主线确认 | 近 5 日内至少 3 次进入前 5 |
+| 新股排除 | 上市不足 120 个交易日 |
+
+## 后果
+
+MVP-1 可以先验证日线 C 点结构的统计边际，而不被分钟级执行建模拖慢。
+
+系统必须明确标注：MVP-1 是日线代理研究结果，不等同于完整实盘交易系统。
+
+未来任何参数优化都必须比较样本外表现，不能只接受样本内收益更高的参数。
