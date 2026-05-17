@@ -1,95 +1,119 @@
-# suishi_north_backtest Context
+# suishi_north_backtest 项目上下文
 
-## Project purpose
+## 项目目的
 
-This repository builds a backtesting and optimization system for the 随势向北股票趋势交易系统.
+本仓库用于构建 `随势向北股票趋势交易系统` 的回测与优化系统。
 
-The system should turn a discretionary trend-trading framework into reproducible, auditable research code.
+系统目标是把一个带有主观结构判断的趋势交易框架，转化为可复现、可审计、可迭代的研究代码。
 
-The outputs are educational trading research artifacts, not investment advice.
+本仓库输出的是交易研究结果，不是投资建议。
 
-## Core trading maxim
+## 核心交易原则
 
 有主线才看股，有级别才定策略，有信号才下单，有止损才持仓，有复盘才迭代。
 
-## Data source
+## 数据源
 
-Market data comes from `a-stock-data`.
+市场数据来自 `a-stock-data`。
 
-The backtest system should treat the data source as an adapter boundary. Strategy logic should not depend directly on vendor-specific data shapes.
+回测系统应把数据源视为适配器边界。策略逻辑不应直接依赖某个外部接口的字段形状。
 
-## Timeframe model
+## 周期模型
 
-| Layer | Timeframe | Responsibility |
+| 层级 | 周期 | 职责 |
 |---|---|---|
-| Market environment | Index / theme level | Decide whether the system is allowed to trade |
-| Big cycle | Weekly | Direction filter |
-| Trading cycle | Daily | Define AB, BC, C-point area, and candidate state |
-| Execution cycle | 60-minute | Define current-trend reversal, entry trigger, and structural stop |
+| 市场环境 | 指数 / 行业 / 主线层 | 判断系统是否允许交易 |
+| 大级别 | 周线 | 方向过滤 |
+| 交易级别 | 日线 | 定义 AB、BC、C 点区域和候选状态 |
+| 执行级别 | 60 分钟 | 定义当前走势转向、买入触发和结构止损 |
 
-In this repo, `当前走势` means the 60-minute execution timeframe trend unless an ADR changes it.
+在本仓库中，除非 ADR 另行修改，`当前走势` 指 60 分钟执行周期走势。
 
-## Core strategy concepts
+MVP-1 暂不使用 60 分钟数据，而是用日线止跌转强规则近似执行周期转向。
+
+## 核心策略概念
 
 ### 主线
 
-A tradable market theme with sector linkage, continuity, liquidity, and identifiable leaders/followers.
+可交易主线指具有持续性、资金参与度和板块联动的市场方向。
 
-The system should reduce exposure or stay in cash when there is no clear main theme.
+MVP-1 中，主线使用机械化代理：二级行业成交金额连续 3 个交易日进入前 5 名，视为强主线。
+
+没有明确主线时，系统应减少交易或仅输出观察结果。
 
 ### AB 段
 
-A clear daily-level advance from A to B.
+从 A 点到 B 点的日线级别明显上涨段。
 
-Default minimum rise: 20%.
+默认最小涨幅：20%。
 
 ### BC 调整
 
-A controlled pullback or consolidation after B.
+B 点之后的受控回撤或横向整理。
 
-Default maximum retracement: 60% of the AB gain.
+默认最大回撤：不超过 AB 涨幅的 60%。
 
 ### C 点
 
-The area near the end of BC where downside momentum weakens and the 60-minute execution timeframe begins to turn upward.
+BC 调整接近结束、下跌动能减弱、执行周期开始转强的区域。
 
-C must be identifiable using only data available on or before the selection date.
+C 点必须只用选股日及以前的数据识别，不能用未来走势倒推。
+
+MVP-1 中，C 点使用日线代理规则识别。
 
 ### D 点
 
-Possible later expansion after C. D is not required to have happened at candidate selection time.
+C 点之后可能出现的扩展或突破段。选股时不要求 D 点已经发生。
 
-## Default parameters
+## MVP-1 默认参数
 
-| Parameter | Default |
-|---|---|
-| AB minimum rise | 20% |
-| BC maximum retracement | 60% of AB gain |
-| Emergency stop | -5% from entry |
-| Time stop | 3 trading days |
-| Max trades per day | 1 |
-| Max trades per week | 2 |
-| Single-trade account risk | 0.5%-1% |
+| 参数 | 默认值 |
+|---|---:|
+| AB 最小涨幅 | 20% |
+| BC 最大回撤 | AB 涨幅的 60% |
+| B 后 C 点窗口 | 3-20 个交易日 |
+| 信号日收盘价距离 C 点低点最大幅度 | 8% |
+| 应急止损 | 买入价下跌 5% |
+| 时间止损 | 买入后 3 个交易日无浮盈 |
+| 趋势退出 | 持仓以来最高收盘价回撤 8% |
+| 硬最大持仓 | 30 个交易日 |
+| 主线确认 | 二级行业成交金额连续 3 日前 5 |
+| 观察主线确认 | 近 5 日内至少 3 次进入前 5 |
+| 新股排除 | 上市不足 120 个交易日 |
 
-## Backtest invariants
+这些参数都是后续可优化参数。任何优化都必须进行样本外验证。
 
-- No look-ahead bias.
-- Every signal must be computed as-of the selection timestamp.
-- Later price action must not be used to define A, B, C, entry, or stop.
-- Corporate actions, suspensions, limit-up/limit-down constraints, liquidity, and transaction costs should be modeled explicitly where data allows.
-- Every backtest run should record the data version, parameter set, universe, date range, and code version.
+## 回测不变量
 
-## Engineering direction
+- 严格避免未来函数。
+- 每个信号必须按信号日当时可获得的数据计算。
+- 不允许用后续价格走势定义 A、B、C、买点或止损。
+- 停牌、涨跌停、复权、成交额、流动性、交易成本和滑点应在数据允许范围内显式建模。
+- 每次回测必须记录数据版本、参数组合、股票池、时间范围和代码版本。
+- 回测报告必须区分纯结构轨和主线过滤轨。
 
-Prefer a layered architecture:
+## 策略有效性的判断
 
-1. Data adapters
-2. Calendar and market-session utilities
-3. Feature computation
-4. Strategy signal generation
-5. Execution simulation
-6. Portfolio and risk model
-7. Metrics and reporting
-8. Parameter optimization and validation
+策略有效不等于收益率最高。
 
-Keep strategy rules deterministic and testable.
+MVP-1 的有效性判断应同时观察：
+
+1. 结构有效性：C 点结构是否带来高于随机入场的正向 MFE。
+2. 交易绩效：胜率、平均盈亏比、Profit Factor、收益回撤比是否合理。
+3. 稳健性：分年度、分市场环境、样本外表现是否不过度依赖单一年份或单一行情。
+4. 主线增益：加入二级行业主线过滤后，胜率、盈亏比或回撤是否优于纯结构轨。
+
+## 工程方向
+
+优先采用分层架构：
+
+1. 数据适配层
+2. 交易日历与市场状态工具
+3. 特征计算层
+4. 策略信号生成层
+5. 执行模拟层
+6. 组合与风险模型
+7. 指标与报告层
+8. 参数优化与样本外验证层
+
+策略规则应保持确定性、可测试、可解释。
