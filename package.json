@@ -4,7 +4,7 @@
   "private": true,
   "description": "随势向北股票趋势交易系统的回测与优化系统",
   "scripts": {
-    "prepare": "husky"
+    "prepare": "husky && chmod +x .husky/pre-commit"
   },
   "devDependencies": {
     "husky": "^9.1.7",
