@@ -11,6 +11,7 @@ from suishi_north_backtest.config import BacktestConfig
 
 
 RESEARCH_LIMITATION = "MVP-1 是日线代理研究系统，不等同于完整实盘交易系统。"
+CSV_ENCODING = "utf-8-sig"
 
 
 @dataclass(frozen=True)
@@ -35,7 +36,7 @@ def run_mvp1_backtest(config: BacktestConfig) -> BacktestResult:
 
 
 def _write_equity_curve(path: Path, config: BacktestConfig) -> None:
-    with path.open("w", newline="", encoding="utf-8") as file:
+    with path.open("w", newline="", encoding=CSV_ENCODING) as file:
         writer = csv.DictWriter(file, fieldnames=["date", "cash", "equity"])
         writer.writeheader()
         writer.writerow(
@@ -55,7 +56,7 @@ def _write_equity_curve(path: Path, config: BacktestConfig) -> None:
 
 
 def _write_trades(path: Path) -> None:
-    with path.open("w", newline="", encoding="utf-8") as file:
+    with path.open("w", newline="", encoding=CSV_ENCODING) as file:
         writer = csv.DictWriter(
             file,
             fieldnames=[
@@ -72,7 +73,7 @@ def _write_trades(path: Path) -> None:
 
 
 def _write_skipped_trades(path: Path) -> None:
-    with path.open("w", newline="", encoding="utf-8") as file:
+    with path.open("w", newline="", encoding=CSV_ENCODING) as file:
         writer = csv.DictWriter(
             file,
             fieldnames=["signal_date", "symbol", "reason"],
