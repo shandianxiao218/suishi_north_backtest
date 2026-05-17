@@ -14,13 +14,27 @@ MVP-1 是日线代理研究系统，用于验证日线 C 点结构在组合级�
 - 暂不实现完整 `a-stock-data` 数据适配。
 - 暂不做激进参数优化。
 
+## 开发安装
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
 ## 运行测试
 
 ```bash
 python -m pytest
 ```
 
+也可以通过 npm 脚本运行：
+
+```bash
+npm run test
+```
+
 ## 运行 MVP-1 骨架
+
+安装后可以运行：
 
 ```bash
 suishi-north-backtest --output-dir outputs/mvp1-skeleton
