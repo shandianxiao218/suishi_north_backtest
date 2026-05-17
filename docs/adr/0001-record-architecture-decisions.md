@@ -1,26 +1,36 @@
-# ADR-0001: Record architecture decisions in docs/adr
+# ADR-0001：在 docs/adr 中记录架构决策
 
-## Status
+## 状态
 
-Accepted
+已接受
 
-## Context
+## 背景
 
-The repo will evolve from an empty backtest prototype into a research system with data adapters, strategy rules, simulation logic, optimization workflows, and reporting.
+本仓库会从空白回测原型逐步演进为包含数据适配、策略规则、执行模拟、参数优化和报告输出的研究系统。
 
-Backtesting systems are vulnerable to hidden assumptions, especially around look-ahead bias, data boundaries, execution modeling, and parameter optimization.
+回测系统很容易隐藏关键假设，尤其是：
 
-## Decision
+- 未来函数
+- 数据边界
+- 交易执行建模
+- 参数优化
+- 样本内 / 样本外划分
 
-Architecture decisions will be recorded as ADRs under `docs/adr/`.
+这些假设如果只存在于对话或代码注释中，后续很容易丢失或被无意覆盖。
 
-Each ADR should include:
+## 决策
 
-- Status
-- Context
-- Decision
-- Consequences
+架构决策记录在 `docs/adr/` 目录中。
 
-## Consequences
+每份 ADR 至少包含：
 
-Future agents and contributors should read relevant ADRs before changing core behavior.
+- 状态
+- 背景
+- 决策
+- 后果
+
+## 后果
+
+未来 agent 和贡献者在修改核心行为前，应先阅读相关 ADR。
+
+如果新实现与已有 ADR 冲突，必须显式指出并新增 ADR 说明变更原因。
