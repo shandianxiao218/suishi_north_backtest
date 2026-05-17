@@ -1,0 +1,17 @@
+{
+  "name": "suishi-north-backtest",
+  "version": "0.1.0",
+  "private": true,
+  "description": "随势向北股票趋势交易系统的回测与优化系统",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
+    "prettier": "^3.5.3"
+  },
+  "lint-staged": {
+    "*": "prettier --ignore-unknown --write"
+  }
+}
