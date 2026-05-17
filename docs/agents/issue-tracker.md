@@ -1,20 +1,21 @@
-# Issue tracker: GitHub
+# Issue tracker：GitHub
 
-Issues and PRDs for this repo live as GitHub issues.
+本仓库的任务、PRD、缺陷记录和实现切片都使用 GitHub Issues。
 
-Repository: `shandianxiao218/suishi_north_backtest`
+仓库：`shandianxiao218/suishi_north_backtest`
 
-## Conventions
+## 约定
 
-- Create issues in GitHub Issues.
-- Use labels from `docs/agents/triage-labels.md`.
-- PRDs should also be published as GitHub issues unless a task says otherwise.
-- Implementation tickets should be independently grabbable vertical slices.
+- 新任务创建为 GitHub Issue。
+- 标签使用 `docs/agents/triage-labels.md` 中定义的标签词汇。
+- PRD 默认也发布为 GitHub Issue，除非任务明确要求使用其他位置。
+- 实现任务应拆成可独立领取、可独立验证的纵向切片。
+- Issue 描述默认使用中文。
 
-## When a skill says "publish to the issue tracker"
+## 当技能要求“发布到 issue tracker”时
 
-Create a GitHub issue in `shandianxiao218/suishi_north_backtest`.
+在 `shandianxiao218/suishi_north_backtest` 创建 GitHub Issue。
 
-## When a skill says "fetch the relevant ticket"
+## 当技能要求“读取相关 ticket”时
 
-Read the referenced GitHub issue, including comments and labels.
+读取对应 GitHub Issue，包括正文、评论和标签。
