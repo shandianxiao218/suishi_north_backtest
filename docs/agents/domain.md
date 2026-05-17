@@ -1,10 +1,10 @@
-# Domain Docs
+# 领域文档
 
-How engineering skills should consume this repo's domain documentation when exploring the codebase.
+本文件说明工程技能在探索本仓库时应如何读取领域文档。
 
-## Layout
+## 文档布局
 
-This repo uses a single-context layout:
+本仓库使用单上下文布局：
 
 ```text
 /
@@ -13,21 +13,22 @@ This repo uses a single-context layout:
 └── src/
 ```
 
-## Before exploring, read these
+## 探索代码前先读
 
-- `CONTEXT.md` at the repo root.
-- Relevant ADRs under `docs/adr/`.
+- 根目录 `CONTEXT.md`
+- `docs/adr/` 下与当前任务相关的 ADR
 
-If any of these files do not exist yet, proceed silently and infer from the current task.
+如果某些文件暂不存在，可以静默继续，并从当前任务中推断上下文。
 
-## Use the glossary's vocabulary
+## 使用统一领域语言
 
-When output names a domain concept, use the term as defined in `CONTEXT.md`.
+输出中的领域概念应尽量使用 `CONTEXT.md` 中定义的术语。
 
-Important domain terms include:
+重要领域术语包括：
 
 - 随势向北
 - 主线
+- 二级行业成交金额排名
 - 周线方向
 - 日线 AB 段
 - 日线 BC 调整
@@ -38,11 +39,12 @@ Important domain terms include:
 - 结构止损
 - 应急止损
 - 时间止损
+- 最高收盘价回撤
 - 回测样本
 - 未来函数 / look-ahead bias
 - 参数优化
 - 样本内 / 样本外验证
 
-## Flag ADR conflicts
+## 标记 ADR 冲突
 
-If output contradicts an existing ADR, surface it explicitly rather than silently overriding.
+如果输出与已有 ADR 冲突，应明确指出冲突，而不是静默覆盖既有决策。
