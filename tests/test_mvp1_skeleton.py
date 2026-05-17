@@ -36,3 +36,18 @@ def test_mvp1_backtest_records_research_limitation(tmp_path: Path) -> None:
     metadata = (tmp_path / "run_metadata.json").read_text(encoding="utf-8")
     assert "日线代理研究系统" in metadata
     assert "不等同于完整实盘交易系统" in metadata
+
+
+def test_csv_outputs_are_excel_friendly_utf8_sig(tmp_path: Path) -> None:
+    config = BacktestConfig(output_dir=tmp_path)
+
+    run_mvp1_backtest(config)
+
+    for filename in ["equity_curve.csv", "trades.csv", "skipped_trades.csv"]:
+        content = (tmp_path / filename).read_bytes()
+        assert content.startswith(b"\xef\xbb\xbf"), filename
+
+    skipped_trades = (tmp_path / "skipped_trades.csv").read_text(
+        encoding="utf-8-sig"
+    )
+    assert "MVP-1 骨架阶段暂无真实候选" in skipped_trades
