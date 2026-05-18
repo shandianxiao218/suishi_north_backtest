@@ -7,7 +7,8 @@
     "prepare": "husky && chmod +x .husky/pre-commit",
     "test": "python -m pytest",
     "acceptance": "python scripts/acceptance_check.py",
-    "acceptance:smoke": "python scripts/acceptance_check.py --profile smoke"
+    "acceptance:smoke": "python scripts/acceptance_check.py --profile smoke",
+    "acceptance:real": "python scripts/acceptance_check.py --profile real"
   },
   "devDependencies": {
     "husky": "^9.1.7",

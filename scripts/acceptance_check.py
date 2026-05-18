@@ -9,6 +9,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 REQUIRED_SMOKE_OUTPUTS = [
@@ -55,6 +56,19 @@ FULL_OUTPUT_CATEGORIES = {
 
 CSV_OUTPUTS = ["equity_curve.csv", "trades.csv", "skipped_trades.csv"]
 RESEARCH_LIMITATION_TEXT = "MVP-1 是日线代理研究系统"
+PLACEHOLDER_MARKERS = [
+    "acceptance-placeholder",
+    "验收骨架",
+    "占位",
+    "暂无真实候选",
+    "后续接入",
+    "后续数据",
+    "后续信号",
+    "后续完整数据",
+    "由后续",
+]
+REQUIRED_BENCHMARKS = {"CSI300", "CSI500", "CSI1000"}
+REQUIRED_PERIODS = {"sample_in", "sample_out", "recent"}
 
 
 @dataclass
@@ -81,9 +95,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="运行 MVP-1 总体验收检查")
     parser.add_argument(
         "--profile",
-        choices=["full", "smoke"],
+        choices=["smoke", "full", "real"],
         default="full",
-        help="full 检查完整 MVP-1；smoke 只检查最小骨架。",
+        help=(
+            "smoke 检查最小骨架；full 检查完整输出协议；"
+            "real 额外拒绝占位输出并检查真实回测证据。"
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -120,9 +137,12 @@ def main() -> int:
     validate_metadata(args.output_dir / "run_metadata.json", args, report)
     validate_csv_outputs(args.output_dir, report)
 
-    if args.profile == "full":
+    if args.profile in {"full", "real"}:
         validate_full_outputs(args.output_dir, report)
         validate_audit_headers(args.output_dir, report)
+
+    if args.profile == "real":
+        validate_real_outputs(args.output_dir, report)
 
     print_report(report, args)
     return 0 if report.passed else 1
@@ -286,6 +306,97 @@ def validate_audit_headers(output_dir: Path, report: AcceptanceReport) -> None:
         headers = read_csv_headers(skipped_path)
         if "reason" not in headers:
             report.fail("skipped_trades.csv 缺少跳过原因字段：reason")
+
+
+def validate_real_outputs(output_dir: Path, report: AcceptanceReport) -> None:
+    validate_no_placeholder_markers(output_dir, report)
+    validate_real_metadata(output_dir / "run_metadata.json", report)
+    validate_real_signal_audit(output_dir, report)
+    validate_real_benchmarks(output_dir, report)
+    validate_real_sensitivity(output_dir, report)
+
+
+def validate_no_placeholder_markers(output_dir: Path, report: AcceptanceReport) -> None:
+    for path in output_dir.iterdir():
+        if not path.is_file() or path.suffix.lower() not in {".csv", ".json", ".md"}:
+            continue
+        content = path.read_text(encoding="utf-8-sig" if path.suffix == ".csv" else "utf-8")
+        for marker in PLACEHOLDER_MARKERS:
+            if marker in content:
+                report.fail(f"real 验收不允许占位标记 `{marker}`：{path}")
+
+
+def validate_real_metadata(path: Path, report: AcceptanceReport) -> None:
+    if not path.exists():
+        return
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    data_version = str(metadata.get("data_version", ""))
+    if not data_version:
+        report.fail("real 验收要求 run_metadata.json 记录真实 data_version。")
+    if data_version == "acceptance-placeholder":
+        report.fail("real 验收不允许 data_version=acceptance-placeholder。")
+
+    parameter_set = str(metadata.get("parameter_set", ""))
+    if not parameter_set:
+        report.fail("real 验收要求 run_metadata.json 记录参数集。")
+
+    universe = str(metadata.get("universe", ""))
+    if not universe:
+        report.fail("real 验收要求 run_metadata.json 记录股票池。")
+
+
+def validate_real_signal_audit(output_dir: Path, report: AcceptanceReport) -> None:
+    candidates = read_csv_dicts(first_existing(output_dir, ["candidates.csv", "signals.csv"]))
+    skipped = read_csv_dicts(output_dir / "skipped_trades.csv")
+    trades = read_csv_dicts(output_dir / "trades.csv")
+
+    has_candidate = bool(candidates)
+    has_trade = bool(trades)
+    has_real_skip = any(row.get("reason") for row in skipped)
+    if not (has_candidate or has_trade or has_real_skip):
+        report.fail("real 验收要求候选、交易或跳过审计至少有一类真实记录。")
+
+
+def validate_real_benchmarks(output_dir: Path, report: AcceptanceReport) -> None:
+    path = first_existing(output_dir, ["benchmark_comparison.csv", "benchmarks.csv"])
+    rows = read_csv_dicts(path)
+    benchmarks = {row.get("benchmark", "") for row in rows}
+    periods = {row.get("period", "") for row in rows}
+
+    missing_benchmarks = REQUIRED_BENCHMARKS.difference(benchmarks)
+    if missing_benchmarks:
+        report.fail("real 验收缺少指数基准：" + ", ".join(sorted(missing_benchmarks)))
+
+    missing_periods = REQUIRED_PERIODS.difference(periods)
+    if missing_periods:
+        report.fail("real 验收缺少样本区间：" + ", ".join(sorted(missing_periods)))
+
+
+def validate_real_sensitivity(output_dir: Path, report: AcceptanceReport) -> None:
+    path = first_existing(output_dir, ["sensitivity.csv", "parameter_sensitivity.csv"])
+    rows = read_csv_dicts(path)
+    if len(rows) < 2:
+        report.fail("real 验收要求 sensitivity 输出至少包含基线和一个参数扰动。")
+        return
+
+    parameters = {row.get("parameter", "") for row in rows}
+    if parameters == {"baseline"}:
+        report.fail("real 验收要求 sensitivity 不只包含 baseline。")
+
+
+def first_existing(output_dir: Path, filenames: list[str]) -> Path:
+    for filename in filenames:
+        path = output_dir / filename
+        if path.exists():
+            return path
+    return output_dir / filenames[0]
+
+
+def read_csv_dicts(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
+        return list(csv.DictReader(file))
 
 
 def read_csv_headers(path: Path) -> set[str]:
