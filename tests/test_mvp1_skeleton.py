@@ -1,3 +1,5 @@
+import csv
+import json
 from pathlib import Path
 
 from suishi_north_backtest.config import BacktestConfig
@@ -21,11 +23,11 @@ def test_mvp1_backtest_writes_required_outputs(tmp_path: Path) -> None:
     assert (tmp_path / "skipped_trades.csv").exists()
     assert (tmp_path / "run_metadata.json").exists()
 
-    metadata = (tmp_path / "run_metadata.json").read_text(encoding="utf-8")
-    assert "mvp1-skeleton-test" in metadata
-    assert "2024-01-01" in metadata
-    assert "2024-01-05" in metadata
-    assert "1000000" in metadata
+    metadata = json.loads((tmp_path / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["name"] == "mvp1-skeleton-test"
+    assert metadata["start_date"] == "2024-01-01"
+    assert metadata["end_date"] == "2024-01-05"
+    assert metadata["initial_cash"] == 1_000_000
 
 
 def test_mvp1_backtest_records_research_limitation(tmp_path: Path) -> None:
@@ -50,4 +52,32 @@ def test_csv_outputs_are_excel_friendly_utf8_sig(tmp_path: Path) -> None:
     skipped_trades = (tmp_path / "skipped_trades.csv").read_text(
         encoding="utf-8-sig"
     )
-    assert "MVP-1 骨架阶段暂无真实候选" in skipped_trades
+    assert "MVP-1 当前为验收骨架" in skipped_trades
+
+
+def test_mvp1_backtest_writes_full_acceptance_outputs(tmp_path: Path) -> None:
+    config = BacktestConfig(output_dir=tmp_path)
+
+    run_mvp1_backtest(config)
+
+    for filename in [
+        "metrics.json",
+        "candidates.csv",
+        "holdings.csv",
+        "benchmark_comparison.csv",
+        "track_comparison.csv",
+        "sensitivity.csv",
+    ]:
+        assert (tmp_path / filename).exists(), filename
+
+
+def test_trade_audit_headers_include_costs_and_track(tmp_path: Path) -> None:
+    config = BacktestConfig(output_dir=tmp_path)
+
+    run_mvp1_backtest(config)
+
+    with (tmp_path / "trades.csv").open("r", encoding="utf-8-sig", newline="") as file:
+        headers = set(next(csv.reader(file)))
+
+    for field_name in ["track", "commission", "slippage_cost", "total_cost"]:
+        assert field_name in headers
