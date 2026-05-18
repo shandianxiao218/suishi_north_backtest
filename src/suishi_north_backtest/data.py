@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import csv
+import json
 from dataclasses import dataclass
-from typing import Protocol
+from pathlib import Path
+from typing import Any, Protocol
 
 from suishi_north_backtest.config import BacktestConfig
 
@@ -200,18 +203,77 @@ class FixtureDataProvider:
 
 
 class AStockDataProvider:
-    """a-stock-data 数据源边界。
+    """读取 a-stock-data 本地快照目录。"""
 
-    该类先固定接口和错误信息，避免策略引擎直接依赖外部字段形状。
-    真正接入外部数据源时，应在这里完成字段映射、缓存和数据版本生成。
-    """
+    REQUIRED_CSV_FILES = {
+        "equity_curve": "equity_curve.csv",
+        "trades": "trades.csv",
+        "skipped_trades": "skipped_trades.csv",
+        "candidates": "candidates.csv",
+        "holdings": "holdings.csv",
+        "benchmark_comparison": "benchmark_comparison.csv",
+        "track_comparison": "track_comparison.csv",
+        "sensitivity": "sensitivity.csv",
+    }
 
     def load(self, config: BacktestConfig) -> Mvp1DataSet:
-        snapshot = config.data_snapshot or "unspecified"
-        raise NotImplementedError(
-            "a-stock-data provider is not implemented yet. "
-            f"Requested snapshot: {snapshot}. Use --data-source fixture for now."
+        snapshot_dir = self._resolve_snapshot_dir(config)
+        manifest = self._read_manifest(snapshot_dir)
+        self._validate_required_files(snapshot_dir)
+        metrics = _read_json(snapshot_dir / "metrics.json")
+        return Mvp1DataSet(
+            data_version=str(manifest.get("data_version") or config.data_snapshot),
+            parameter_set=str(manifest.get("parameter_set", "ADR-0002 defaults")),
+            universe=str(manifest.get("universe", "a-stock-data snapshot")),
+            equity_curve=_read_csv(snapshot_dir / "equity_curve.csv"),
+            trades=_read_csv(snapshot_dir / "trades.csv"),
+            skipped_trades=_read_csv(snapshot_dir / "skipped_trades.csv"),
+            candidates=_read_csv(snapshot_dir / "candidates.csv"),
+            holdings=_read_csv(snapshot_dir / "holdings.csv"),
+            benchmark_comparison=_read_csv(snapshot_dir / "benchmark_comparison.csv"),
+            track_comparison=_read_csv(snapshot_dir / "track_comparison.csv"),
+            sensitivity=_read_csv(snapshot_dir / "sensitivity.csv"),
+            metrics=metrics,
         )
+
+    def _resolve_snapshot_dir(self, config: BacktestConfig) -> Path:
+        if not config.data_snapshot:
+            raise ValueError(
+                "--data-snapshot is required when --data-source a-stock-data is used."
+            )
+        snapshot_dir = config.normalized_data_dir() / config.data_snapshot
+        if not snapshot_dir.exists():
+            raise FileNotFoundError(
+                f"a-stock-data snapshot directory does not exist: {snapshot_dir}"
+            )
+        if not snapshot_dir.is_dir():
+            raise NotADirectoryError(
+                f"a-stock-data snapshot path is not a directory: {snapshot_dir}"
+            )
+        return snapshot_dir
+
+    def _read_manifest(self, snapshot_dir: Path) -> dict[str, Any]:
+        manifest_path = snapshot_dir / "manifest.json"
+        if not manifest_path.exists():
+            raise FileNotFoundError(
+                f"a-stock-data snapshot missing manifest.json: {manifest_path}"
+            )
+        manifest = _read_json(manifest_path)
+        data_version = manifest.get("data_version")
+        if not data_version:
+            raise ValueError("manifest.json must include non-empty data_version")
+        return manifest
+
+    def _validate_required_files(self, snapshot_dir: Path) -> None:
+        missing = [
+            filename
+            for filename in [*self.REQUIRED_CSV_FILES.values(), "metrics.json"]
+            if not (snapshot_dir / filename).exists()
+        ]
+        if missing:
+            raise FileNotFoundError(
+                "a-stock-data snapshot missing required files: " + ", ".join(missing)
+            )
 
 
 def build_data_provider(name: str) -> DataProvider:
@@ -220,6 +282,15 @@ def build_data_provider(name: str) -> DataProvider:
     if name == "a-stock-data":
         return AStockDataProvider()
     raise ValueError(f"Unsupported data source: {name}")
+
+
+def _read_csv(path: Path) -> list[dict[str, object]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
+        return list(csv.DictReader(file))
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _fixture_benchmark_rows() -> list[dict[str, object]]:
