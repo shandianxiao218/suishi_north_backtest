@@ -91,6 +91,28 @@ python -m suishi_north_backtest.cli \
 
 引擎只依赖统一的 `Mvp1DataSet`，不直接依赖外部数据源字段。真实数据接入时必须保持输出协议不变。
 
+### 构建 a-stock-data 本地快照
+
+如果已经有一个 MVP-1 输出目录，可以用快照构建器自动生成 `a-stock-data` 本地快照目录，替代手动 `Copy-Item`：
+
+```bash
+python -m suishi_north_backtest.snapshot_builder \
+  --source-output-dir outputs/mvp1-skeleton \
+  --snapshot snapshot-2026-05-18 \
+  --data-dir data/a_stock_data_snapshots \
+  --data-version a-stock-data-snapshot-2026-05-18 \
+  --overwrite
+```
+
+也可以通过 npm 脚本运行：
+
+```bash
+npm run snapshot:build -- \
+  --source-output-dir outputs/mvp1-skeleton \
+  --snapshot snapshot-2026-05-18 \
+  --overwrite
+```
+
 ### a-stock-data 快照目录格式
 
 默认快照根目录：
