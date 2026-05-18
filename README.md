@@ -67,7 +67,7 @@ python scripts/acceptance_check.py --profile smoke
 npm run acceptance:smoke
 ```
 
-完整验收用于检查 ADR-0002 和 #1-#12 约定的完整 MVP-1 输出：
+完整输出协议验收用于检查 ADR-0002 和 #1-#12 约定的输出文件是否齐全：
 
 ```bash
 python scripts/acceptance_check.py --profile full
@@ -79,8 +79,21 @@ python scripts/acceptance_check.py --profile full
 npm run acceptance
 ```
 
+真实回测验收用于检查输出是否已经替换为真实数据和真实回测证据，不能包含占位数据：
+
+```bash
+python scripts/acceptance_check.py --profile real
+```
+
+或：
+
+```bash
+npm run acceptance:real
+```
+
 说明：
 
 - `smoke` 通过只代表最小回测骨架可运行。
-- `full` 通过才代表 MVP-1 系统输出满足总体验收标准。
-- 当前如果代码仍只输出最小骨架文件，`full` 应失败，这是预期行为；它用于暴露“issue 已关闭但实际输出不完整”的问题。
+- `full` 通过代表 MVP-1 输出协议满足总体验收标准。
+- `real` 通过才代表输出不再是占位骨架，而是具备真实数据版本、真实候选/交易审计、真实基准区间和真实参数扰动证据。
+- 当前占位骨架应通过 `full`，但不应通过 `real`。
