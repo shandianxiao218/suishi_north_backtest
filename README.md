@@ -52,3 +52,35 @@ python -m suishi_north_backtest.cli --output-dir outputs/mvp1-skeleton
 - `trades.csv`
 - `skipped_trades.csv`
 - `run_metadata.json`
+
+## MVP-1 验收
+
+快速烟雾验收只检查最小骨架是否能运行：
+
+```bash
+python scripts/acceptance_check.py --profile smoke
+```
+
+也可以通过 npm 脚本运行：
+
+```bash
+npm run acceptance:smoke
+```
+
+完整验收用于检查 ADR-0002 和 #1-#12 约定的完整 MVP-1 输出：
+
+```bash
+python scripts/acceptance_check.py --profile full
+```
+
+或：
+
+```bash
+npm run acceptance
+```
+
+说明：
+
+- `smoke` 通过只代表最小回测骨架可运行。
+- `full` 通过才代表 MVP-1 系统输出满足总体验收标准。
+- 当前如果代码仍只输出最小骨架文件，`full` 应失败，这是预期行为；它用于暴露“issue 已关闭但实际输出不完整”的问题。
