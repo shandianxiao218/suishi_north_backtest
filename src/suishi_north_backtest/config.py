@@ -19,6 +19,10 @@ class BacktestConfig:
     output_dir: Path = Path("outputs/mvp1-skeleton")
     data_source: DataSourceName = "fixture"
     data_snapshot: str | None = None
+    data_dir: Path = Path("data/a_stock_data_snapshots")
 
     def normalized_output_dir(self) -> Path:
         return Path(self.output_dir)
+
+    def normalized_data_dir(self) -> Path:
+        return Path(self.data_dir)
