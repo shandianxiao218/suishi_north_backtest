@@ -117,6 +117,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", default="2024-01-01")
     parser.add_argument("--end-date", default="2024-01-05")
     parser.add_argument("--initial-cash", default="1000000")
+    parser.add_argument(
+        "--data-source",
+        choices=["fixture", "a-stock-data"],
+        default="fixture",
+        help="数据源。fixture 用于确定性验收；a-stock-data 读取本地快照目录。",
+    )
+    parser.add_argument(
+        "--data-snapshot",
+        default=None,
+        help="数据快照版本。a-stock-data 下对应 data_dir 内的子目录名。",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("data/a_stock_data_snapshots"),
+        help="a-stock-data 本地快照根目录。",
+    )
     return parser.parse_args()
 
 
@@ -207,7 +224,13 @@ def run_cli(repo_root: Path, args: argparse.Namespace, report: AcceptanceReport)
         str(args.initial_cash),
         "--output-dir",
         str(args.output_dir),
+        "--data-source",
+        args.data_source,
     ]
+    if args.data_snapshot is not None:
+        command.extend(["--data-snapshot", args.data_snapshot])
+    if args.data_dir is not None:
+        command.extend(["--data-dir", str(args.data_dir)])
     result = subprocess.run(command, cwd=repo_root, env=env)
     if result.returncode != 0:
         report.fail("MVP-1 CLI 运行失败。请查看上方 traceback 或错误输出。")

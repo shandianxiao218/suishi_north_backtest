@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.acceptance_check import (
     AcceptanceReport,
+    parse_args,
+    run_cli,
     validate_csv_outputs,
     validate_full_outputs,
     validate_real_outputs,
@@ -160,3 +164,183 @@ def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> 
 
 def write_json(path: Path, value: dict[str, object]) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+
+
+# ---- 阶段 M：数据源参数测试 ----
+
+
+def test_parse_args_default_data_source_is_fixture(monkeypatch: object) -> None:
+    monkeypatch.setattr(sys, "argv", ["acceptance_check.py", "--profile", "real"])
+    args = parse_args()
+
+    assert args.data_source == "fixture"
+    assert args.data_snapshot is None
+    assert args.data_dir == Path("data/a_stock_data_snapshots")
+
+
+def test_parse_args_accepts_data_source_a_stock_data(monkeypatch: object) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "acceptance_check.py",
+            "--profile",
+            "real",
+            "--data-source",
+            "a-stock-data",
+        ],
+    )
+    args = parse_args()
+
+    assert args.data_source == "a-stock-data"
+
+
+def test_parse_args_accepts_data_snapshot(monkeypatch: object) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "acceptance_check.py",
+            "--profile",
+            "real",
+            "--data-snapshot",
+            "snapshot-2026-05-18",
+        ],
+    )
+    args = parse_args()
+
+    assert args.data_snapshot == "snapshot-2026-05-18"
+
+
+def test_parse_args_accepts_data_dir(monkeypatch: object) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "acceptance_check.py",
+            "--profile",
+            "real",
+            "--data-dir",
+            "custom/data/dir",
+        ],
+    )
+    args = parse_args()
+
+    assert args.data_dir == Path("custom/data/dir")
+
+
+def test_run_cli_passes_data_source_to_subprocess(
+    monkeypatch: object, tmp_path: Path
+) -> None:
+    captured_command: list[str] = []
+
+    def mock_run(command: list[str], **kwargs: object) -> object:
+        captured_command.extend(command)
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr("scripts.acceptance_check.subprocess.run", mock_run)
+    monkeypatch.setattr(sys, "argv", ["acceptance_check.py", "--profile", "real"])
+    args = parse_args()
+    args.output_dir = tmp_path
+    report = AcceptanceReport()
+
+    run_cli(Path.cwd(), args, report)
+
+    assert "--data-source" in captured_command
+    idx = captured_command.index("--data-source")
+    assert captured_command[idx + 1] == "fixture"
+    assert report.passed
+
+
+def test_run_cli_passes_a_stock_data_params_to_subprocess(
+    monkeypatch: object, tmp_path: Path
+) -> None:
+    captured_command: list[str] = []
+
+    def mock_run(command: list[str], **kwargs: object) -> object:
+        captured_command.extend(command)
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr("scripts.acceptance_check.subprocess.run", mock_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "acceptance_check.py",
+            "--profile",
+            "real",
+            "--data-source",
+            "a-stock-data",
+            "--data-snapshot",
+            "snapshot-2026-05-18",
+            "--data-dir",
+            "data/a_stock_data_snapshots",
+        ],
+    )
+    args = parse_args()
+    args.output_dir = tmp_path
+    report = AcceptanceReport()
+
+    run_cli(Path.cwd(), args, report)
+
+    assert "--data-source" in captured_command
+    idx = captured_command.index("--data-source")
+    assert captured_command[idx + 1] == "a-stock-data"
+
+    assert "--data-snapshot" in captured_command
+    idx = captured_command.index("--data-snapshot")
+    assert captured_command[idx + 1] == "snapshot-2026-05-18"
+
+    assert "--data-dir" in captured_command
+    idx = captured_command.index("--data-dir")
+    assert captured_command[idx + 1] == str(Path("data/a_stock_data_snapshots"))
+
+
+def test_run_cli_does_not_pass_snapshot_when_none(
+    monkeypatch: object, tmp_path: Path
+) -> None:
+    captured_command: list[str] = []
+
+    def mock_run(command: list[str], **kwargs: object) -> object:
+        captured_command.extend(command)
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr("scripts.acceptance_check.subprocess.run", mock_run)
+    monkeypatch.setattr(sys, "argv", ["acceptance_check.py", "--profile", "real"])
+    args = parse_args()
+    args.output_dir = tmp_path
+    report = AcceptanceReport()
+
+    run_cli(Path.cwd(), args, report)
+
+    assert "--data-snapshot" not in captured_command
+
+
+def test_run_cli_missing_snapshot_reports_cli_failure(
+    monkeypatch: object, tmp_path: Path
+) -> None:
+    def mock_run(command: list[str], **kwargs: object) -> object:
+        return type("Result", (), {"returncode": 1})()
+
+    monkeypatch.setattr("scripts.acceptance_check.subprocess.run", mock_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "acceptance_check.py",
+            "--profile",
+            "real",
+            "--data-source",
+            "a-stock-data",
+            "--data-snapshot",
+            "nonexistent-snapshot",
+        ],
+    )
+    args = parse_args()
+    args.output_dir = tmp_path
+    report = AcceptanceReport()
+
+    run_cli(Path.cwd(), args, report)
+
+    assert not report.passed
+    assert any("CLI 运行失败" in error for error in report.errors)

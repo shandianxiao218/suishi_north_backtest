@@ -186,6 +186,15 @@ npm run acceptance
 python scripts/acceptance_check.py --profile real
 ```
 
+验收脚本默认使用 fixture 数据源。可以指定 `--data-source`、`--data-snapshot`、`--data-dir` 验收其他数据源：
+
+```bash
+python scripts/acceptance_check.py --profile real \
+  --data-source a-stock-data \
+  --data-snapshot snapshot-2026-05-18 \
+  --data-dir data/a_stock_data_snapshots
+```
+
 或：
 
 ```bash
