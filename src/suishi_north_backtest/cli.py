@@ -18,12 +18,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--data-source",
         choices=["fixture", "a-stock-data"],
         default="fixture",
-        help="数据源。fixture 用于确定性验收；a-stock-data 为后续真实数据接入边界。",
+        help="数据源。fixture 用于确定性验收；a-stock-data 读取本地快照目录。",
     )
     parser.add_argument(
         "--data-snapshot",
         default=None,
-        help="数据快照版本。fixture 下可覆盖默认 data_version。",
+        help="数据快照版本。a-stock-data 下对应 data_dir 内的子目录名。",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("data/a_stock_data_snapshots"),
+        help="a-stock-data 本地快照根目录。",
     )
     return parser
 
@@ -38,6 +44,7 @@ def main() -> None:
         output_dir=args.output_dir,
         data_source=args.data_source,
         data_snapshot=args.data_snapshot,
+        data_dir=args.data_dir,
     )
     result = run_mvp1_backtest(config)
     print(f"MVP-1 回测已运行，输出目录：{result.output_dir}")
