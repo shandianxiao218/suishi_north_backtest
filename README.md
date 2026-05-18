@@ -55,13 +55,17 @@ python -m suishi_north_backtest.cli \
   --output-dir outputs/mvp1-fixture
 ```
 
-`a-stock-data` 已作为数据源边界预留，但尚未实现真实外部数据读取：
+`a-stock-data` 当前读取本地快照目录，不直接在线拉取外部服务：
 
 ```bash
-python -m suishi_north_backtest.cli --data-source a-stock-data
+python -m suishi_north_backtest.cli \
+  --data-source a-stock-data \
+  --data-snapshot snapshot-2026-05-18 \
+  --data-dir data/a_stock_data_snapshots \
+  --output-dir outputs/mvp1-a-stock-data
 ```
 
-当前会返回明确的未实现错误。后续真实数据接入必须在 `AStockDataProvider` 中完成字段映射、缓存和数据版本生成，不应让策略引擎直接依赖外部数据字段形状。
+后续外部同步器需要先把 `a-stock-data` 数据转换为本地快照目录。回测引擎只读取统一快照，不直接依赖外部接口字段形状。
 
 运行后会生成：
 
@@ -83,9 +87,50 @@ python -m suishi_north_backtest.cli --data-source a-stock-data
 | 数据源 | 状态 | 用途 |
 |---|---|---|
 | `fixture` | 已实现 | 确定性验收和回归测试 |
-| `a-stock-data` | 边界已预留，读取未实现 | 后续接入真实 A 股历史数据 |
+| `a-stock-data` | 本地快照读取已实现 | 读取外部同步器生成的 A 股数据快照 |
 
 引擎只依赖统一的 `Mvp1DataSet`，不直接依赖外部数据源字段。真实数据接入时必须保持输出协议不变。
+
+### a-stock-data 快照目录格式
+
+默认快照根目录：
+
+```text
+data/a_stock_data_snapshots/
+```
+
+每个快照使用一个子目录：
+
+```text
+data/a_stock_data_snapshots/<snapshot-name>/
+```
+
+必需文件：
+
+```text
+manifest.json
+equity_curve.csv
+trades.csv
+skipped_trades.csv
+candidates.csv
+holdings.csv
+benchmark_comparison.csv
+track_comparison.csv
+sensitivity.csv
+metrics.json
+```
+
+`manifest.json` 至少包含：
+
+```json
+{
+  "data_version": "a-stock-data-snapshot-2026-05-18",
+  "parameter_set": "ADR-0002 defaults",
+  "universe": "沪深 A 股核心股票池"
+}
+```
+
+所有 CSV 建议使用 `utf-8-sig`，便于 Windows / Excel 正确显示中文。
 
 ## MVP-1 验收
 
