@@ -115,9 +115,9 @@ def test_old_enough_stock_included() -> None:
 
 
 def test_limit_up_buy_skipped() -> None:
-    """一字涨停无法买入：收盘价等于涨停价。"""
+    """一字涨停无法买入：open==high==low==close==limit_up。"""
     stocks = [
-        stock(symbol="000001", close=11.0, limit_up=11.0),
+        stock(symbol="000001", open=11.0, high=11.0, low=11.0, close=11.0, limit_up=11.0),
     ]
     md = make_market_data(stocks)
     _, audit = build_universe_with_audit(md)
@@ -126,16 +126,48 @@ def test_limit_up_buy_skipped() -> None:
     assert audited["000001"].buy_restricted is True
 
 
-def test_limit_down_sell_deferred() -> None:
-    """一字跌停无法卖出：收盘价等于跌停价。"""
+def test_normal_limit_up_not_restricted() -> None:
+    """普通涨停（有日内波动）不应视为一字涨停，不限制买入。"""
     stocks = [
-        stock(symbol="000001", close=9.0, limit_down=9.0),
+        stock(symbol="000001", open=10.5, high=11.0, low=10.3, close=11.0, limit_up=11.0),
+    ]
+    md = make_market_data(stocks)
+    universe, audit = build_universe_with_audit(md)
+
+    symbols = {e.symbol for e in universe}
+    assert "000001" in symbols
+    # 普通涨停不应产生 buy_restricted 审计
+    stock_audit = [a for a in audit if a.symbol == "000001"]
+    restricted = [a for a in stock_audit if a.buy_restricted]
+    assert len(restricted) == 0
+
+
+def test_limit_down_sell_deferred() -> None:
+    """一字跌停无法卖出：open==high==low==close==limit_down。"""
+    stocks = [
+        stock(symbol="000001", open=9.0, high=9.0, low=9.0, close=9.0, limit_down=9.0),
     ]
     md = make_market_data(stocks)
     _, audit = build_universe_with_audit(md)
 
     audited = {a.symbol: a for a in audit}
     assert audited["000001"].sell_deferred is True
+
+
+def test_normal_limit_down_not_deferred() -> None:
+    """普通跌停（有日内波动）不应视为一字跌停，不延迟卖出。"""
+    stocks = [
+        stock(symbol="000001", open=9.5, high=9.8, low=9.0, close=9.0, limit_down=9.0),
+    ]
+    md = make_market_data(stocks)
+    universe, audit = build_universe_with_audit(md)
+
+    symbols = {e.symbol for e in universe}
+    assert "000001" in symbols
+    # 普通跌停不应产生 sell_deferred 审计
+    stock_audit = [a for a in audit if a.symbol == "000001"]
+    deferred = [a for a in stock_audit if a.sell_deferred]
+    assert len(deferred) == 0
 
 
 def test_normal_stock_tradable() -> None:

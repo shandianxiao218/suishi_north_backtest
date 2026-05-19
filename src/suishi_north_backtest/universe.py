@@ -138,15 +138,19 @@ def _count_trading_days_between(
 
 
 def _is_buy_restricted(s: StockDaily) -> bool:
-    if s.close is None or s.limit_up is None:
+    if s.open is None or s.high is None or s.low is None or s.close is None:
         return False
-    return s.close >= s.limit_up
+    if s.limit_up is None:
+        return False
+    return s.open == s.high == s.low == s.close == s.limit_up
 
 
 def _is_sell_deferred(s: StockDaily) -> bool:
-    if s.close is None or s.limit_down is None:
+    if s.open is None or s.high is None or s.low is None or s.close is None:
         return False
-    return s.close <= s.limit_down
+    if s.limit_down is None:
+        return False
+    return s.open == s.high == s.low == s.close == s.limit_down
 
 
 def _tradability_reason(s: StockDaily) -> str:
