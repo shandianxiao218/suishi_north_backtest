@@ -2,6 +2,19 @@
 
 本文件是仓库中专门用于和 Claude Code 交互的入口文件。Claude Code 接手本仓库时，应先阅读本文件，再阅读 `AGENTS.md`、`CONTEXT.md`、`README.md` 和最新交接文档。
 
+## 文件使用边界
+
+`CLAUDE.md` 只作为长期稳定规则入口，不作为每次对话记录、临时任务单或测试输出日志。
+
+后续交互按以下分工处理：
+
+1. `CLAUDE.md` 只作为稳定规则入口。
+2. 当前任务写进 `TODO_QUALITY_REVIEW.md` 或 PR 描述。
+3. 每次测试输出贴 PR 评论。
+4. 阶段完成后写 handoff 文档。
+
+不要把每次对话、临时测试输出、执行过程日志或一次性 TODO 追加到本文件。需要频繁更新的内容应放到 PR 描述、PR 评论、GitHub Issues、`TODO_QUALITY_REVIEW.md` 或 `docs/handoff/`。
+
 ## 最高优先级规则
 
 1. 使用中文交流、中文提交信息、中文 PR 描述和中文文档。
