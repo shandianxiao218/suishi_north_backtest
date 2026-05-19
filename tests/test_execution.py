@@ -4,7 +4,9 @@ import pytest
 
 from suishi_north_backtest.execution import (
     ExecutionResult,
+    SellResult,
     execute_buy,
+    execute_sell,
 )
 from suishi_north_backtest.signals import CandidateSignal
 
@@ -32,7 +34,7 @@ def candidate(
     )
 
 
-# ---- 测试 ----
+# ---- 买入测试 ----
 
 
 def test_buy_at_t_plus_1_open() -> None:
@@ -49,19 +51,39 @@ def test_buy_at_t_plus_1_open() -> None:
     assert result.entry_price == pytest.approx(10.5 * 1.0005, abs=0.001)
 
 
-def test_buy_skipped_when_limit_up() -> None:
-    """一字涨停无法买入。"""
+def test_buy_skipped_when_one_word_limit_up() -> None:
+    """一字涨停（open==high==low==close==limit_up）无法买入。"""
     c = candidate(c_price=10.0)
     result = execute_buy(
         candidate=c,
         open_price=11.0,
+        high=11.0,
+        low=11.0,
+        close=11.0,
+        limit_up=11.0,
         cash=1_000_000.0,
         equity=1_000_000.0,
-        limit_up=11.0,
     )
 
     assert not result.executed
-    assert "涨停" in result.skip_reason
+    assert "一字涨停" in result.skip_reason
+
+
+def test_buy_allowed_when_not_one_word_limit_up() -> None:
+    """非一字涨停（收盘价 != 涨停价）可以买入。"""
+    c = candidate(c_price=10.0)
+    result = execute_buy(
+        candidate=c,
+        open_price=11.0,
+        high=11.5,
+        low=10.8,
+        close=11.2,
+        limit_up=11.0,
+        cash=1_000_000.0,
+        equity=1_000_000.0,
+    )
+
+    assert result.executed
 
 
 def test_buy_skipped_when_no_open_price() -> None:
@@ -104,16 +126,11 @@ def test_single_risk_limits_position() -> None:
     )
 
     assert result.executed
-    # 风险金额 = equity * 1% = 10000
-    # 应急止损 -5% → 最大亏损 = entry_price * 5%
-    # 股数 = 风险金额 / (entry_price * 0.05)
-    # entry_price ≈ 10.0 * 1.0005 ≈ 10.005
-    # 股数 ≈ 10000 / (10.005 * 0.05) ≈ 19990 → round down to 19900
     assert result.shares > 0
 
 
 def test_commission_and_slippage_included() -> None:
-    """佣金和滑点计入成本。"""
+    """佣金计入成本，滑点作为审计字段。"""
     c = candidate(c_price=10.0)
     result = execute_buy(
         candidate=c,
@@ -124,8 +141,8 @@ def test_commission_and_slippage_included() -> None:
 
     assert result.executed
     assert result.commission > 0
-    assert result.slippage > 0
-    assert result.total_cost == pytest.approx(result.commission + result.slippage, abs=0.01)
+    assert result.slippage > 0  # 审计字段仍有值
+    assert result.total_cost == pytest.approx(result.commission, abs=0.01)
 
 
 def test_cash_insufficient_reduces_or_skips() -> None:
@@ -134,7 +151,7 @@ def test_cash_insufficient_reduces_or_skips() -> None:
     result = execute_buy(
         candidate=c,
         open_price=10.0,
-        cash=500.0,  # 不够买一手
+        cash=500.0,
         equity=1_000_000.0,
     )
 
@@ -162,6 +179,7 @@ def test_execution_result_has_required_fields() -> None:
 
 
 def test_cash_deducted_correctly() -> None:
+    """现金扣减 = shares * entry_price + commission（滑点已含在 entry_price 中）。"""
     c = candidate(c_price=10.0)
     initial_cash = 1_000_000.0
     result = execute_buy(
@@ -173,7 +191,122 @@ def test_cash_deducted_correctly() -> None:
 
     assert result.executed
     assert result.cash_remaining < initial_cash
-    # cash_remaining = initial_cash - shares * entry_price - total_cost
     assert result.cash_remaining == pytest.approx(
         initial_cash - result.shares * result.entry_price - result.total_cost, abs=0.01
     )
+
+
+def test_execution_does_not_double_count_slippage() -> None:
+    """滑点不得同时计入成交价和现金扣减。
+
+    方案 A：成交价含滑点。
+    cash -= shares * adjusted_entry_price + commission
+    slippage 只作为审计字段，不额外扣现金。
+    """
+    c = candidate(c_price=10.0)
+    initial_cash = 1_000_000.0
+    result = execute_buy(
+        candidate=c,
+        open_price=10.0,
+        cash=initial_cash,
+        equity=initial_cash,
+    )
+
+    assert result.executed
+    # entry_price = open_price * (1 + slippage_rate)，已含滑点
+    assert result.entry_price > 10.0
+    # total_cost 应只含佣金，不含额外滑点扣减
+    assert result.total_cost == pytest.approx(result.commission, abs=0.01)
+    # 现金扣减验证：cash = initial - shares * entry_price - commission
+    expected_cash = initial_cash - result.shares * result.entry_price - result.commission
+    assert result.cash_remaining == pytest.approx(expected_cash, abs=0.05)
+
+
+# ---- 卖出测试 ----
+
+
+def test_sell_at_t_plus_1_open() -> None:
+    """T+1 开盘价卖出，成交价含滑点。"""
+    result = execute_sell(
+        symbol="000001",
+        open_price=10.5,
+        shares=1000,
+    )
+
+    assert result.executed
+    assert result.sell_price == pytest.approx(10.5 * (1 - 0.0005), abs=0.001)
+
+
+def test_sell_deferred_when_suspended() -> None:
+    """停牌时卖出顺延。"""
+    result = execute_sell(
+        symbol="000001",
+        open_price=None,
+        shares=1000,
+        is_suspended=True,
+    )
+
+    assert not result.executed
+    assert result.deferred
+
+
+def test_sell_deferred_when_one_word_limit_down() -> None:
+    """一字跌停（open==high==low==close==limit_down）无法卖出，顺延。"""
+    result = execute_sell(
+        symbol="000001",
+        open_price=9.0,
+        high=9.0,
+        low=9.0,
+        close=9.0,
+        limit_down=9.0,
+        shares=1000,
+    )
+
+    assert not result.executed
+    assert result.deferred
+    assert "一字跌停" in result.skip_reason
+
+
+def test_sell_allowed_when_not_one_word_limit_down() -> None:
+    """非一字跌停可以卖出。"""
+    result = execute_sell(
+        symbol="000001",
+        open_price=9.0,
+        high=9.5,
+        low=8.8,
+        close=9.2,
+        limit_down=9.0,
+        shares=1000,
+    )
+
+    assert result.executed
+
+
+def test_sell_includes_commission_stamp_tax_and_slippage() -> None:
+    """卖出成本包含佣金、印花税，滑点作为审计字段。"""
+    result = execute_sell(
+        symbol="000001",
+        open_price=10.0,
+        shares=1000,
+    )
+
+    assert result.executed
+    assert result.commission > 0
+    assert result.stamp_tax > 0
+    assert result.slippage > 0
+    assert result.total_cost == pytest.approx(
+        result.commission + result.stamp_tax, abs=0.01
+    )
+
+
+def test_sell_cash_proceeds() -> None:
+    """卖出所得 = shares * sell_price - total_cost。"""
+    result = execute_sell(
+        symbol="000001",
+        open_price=10.0,
+        shares=1000,
+    )
+
+    assert result.executed
+    expected = 1000 * result.sell_price - result.total_cost
+    assert result.cash_proceeds == pytest.approx(expected, abs=0.05)
