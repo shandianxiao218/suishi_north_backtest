@@ -431,6 +431,11 @@ def read_csv_headers(path: Path) -> set[str]:
 def print_report(report: AcceptanceReport, args: argparse.Namespace) -> None:
     print("\n=== MVP-1 验收结果 ===")
     print(f"验收模式：{args.profile}")
+    print(f"数据源：{args.data_source}")
+    if args.data_snapshot:
+        print(f"数据快照：{args.data_snapshot}")
+    if args.data_source == "a-stock-data":
+        print(f"数据目录：{args.data_dir}")
     print(f"输出目录：{args.output_dir}")
 
     print("\n[NOTES]")

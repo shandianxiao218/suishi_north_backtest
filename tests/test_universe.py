@@ -115,9 +115,14 @@ def test_old_enough_stock_included() -> None:
 
 
 def test_limit_up_buy_skipped() -> None:
-    """一字涨停无法买入：收盘价等于涨停价。"""
+    """一字涨停无法买入：开=高=低=收=涨停价。"""
     stocks = [
-        stock(symbol="000001", close=11.0, limit_up=11.0),
+        StockDaily(
+            trade_date="2024-01-02", symbol="000001",
+            open=11.0, high=11.0, low=11.0, close=11.0,
+            volume=1000.0, amount=11000.0,
+            is_st=False, limit_up=11.0, limit_down=None, is_suspended=False,
+        ),
     ]
     md = make_market_data(stocks)
     _, audit = build_universe_with_audit(md)
@@ -127,9 +132,14 @@ def test_limit_up_buy_skipped() -> None:
 
 
 def test_limit_down_sell_deferred() -> None:
-    """一字跌停无法卖出：收盘价等于跌停价。"""
+    """一字跌停无法卖出：开=高=低=收=跌停价。"""
     stocks = [
-        stock(symbol="000001", close=9.0, limit_down=9.0),
+        StockDaily(
+            trade_date="2024-01-02", symbol="000001",
+            open=9.0, high=9.0, low=9.0, close=9.0,
+            volume=1000.0, amount=9000.0,
+            is_st=False, limit_up=None, limit_down=9.0, is_suspended=False,
+        ),
     ]
     md = make_market_data(stocks)
     _, audit = build_universe_with_audit(md)

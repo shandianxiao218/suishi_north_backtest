@@ -173,7 +173,8 @@ def test_cash_deducted_correctly() -> None:
 
     assert result.executed
     assert result.cash_remaining < initial_cash
-    # cash_remaining = initial_cash - shares * entry_price - total_cost
+    # cash_remaining = cash - shares * entry_price - commission
+    # entry_price 已含滑点，不再单独扣滑点
     assert result.cash_remaining == pytest.approx(
-        initial_cash - result.shares * result.entry_price - result.total_cost, abs=0.01
+        initial_cash - result.shares * result.entry_price - result.commission, abs=0.01
     )

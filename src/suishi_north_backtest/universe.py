@@ -138,15 +138,21 @@ def _count_trading_days_between(
 
 
 def _is_buy_restricted(s: StockDaily) -> bool:
-    if s.close is None or s.limit_up is None:
+    """一字涨停：开盘=最高=最低=收盘=涨停价。"""
+    if any(v is None for v in (s.open, s.high, s.low, s.close, s.limit_up)):
         return False
-    return s.close >= s.limit_up
+    return (
+        s.open == s.high == s.low == s.close == s.limit_up
+    )
 
 
 def _is_sell_deferred(s: StockDaily) -> bool:
-    if s.close is None or s.limit_down is None:
+    """一字跌停：开盘=最高=最低=收盘=跌停价。"""
+    if any(v is None for v in (s.open, s.high, s.low, s.close, s.limit_down)):
         return False
-    return s.close <= s.limit_down
+    return (
+        s.open == s.high == s.low == s.close == s.limit_down
+    )
 
 
 def _tradability_reason(s: StockDaily) -> str:

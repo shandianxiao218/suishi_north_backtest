@@ -95,6 +95,12 @@ def _to_float(value: str | None) -> float | None:
     return float(value)
 
 
+def _to_bool(value: str | None) -> bool:
+    if value is None or value.strip() == "":
+        return False
+    return value.strip().lower() in ("1", "true", "yes")
+
+
 def _load_stock_daily(path: Path) -> list[StockDaily]:
     rows = _read_csv_rows(path)
     result = []
@@ -110,7 +116,7 @@ def _load_stock_daily(path: Path) -> list[StockDaily]:
                 close=_to_float(row.get("close")),
                 volume=_to_float(row.get("volume")),
                 amount=_to_float(row.get("amount")),
-                is_st=False,
+                is_st=_to_bool(row.get("is_st")),
                 limit_up=_to_float(row.get("limit_up")),
                 limit_down=_to_float(row.get("limit_down")),
                 is_suspended=not has_open,

@@ -16,6 +16,7 @@ class ExecutionResult:
     total_cost: float = 0.0
     cash_remaining: float = 0.0
     skip_reason: str = ""
+    raw_open_price: float | None = None
 
 
 DEFAULT_RISK_PCT = 0.01
@@ -81,10 +82,13 @@ def execute_buy(
         )
 
     # Check if cash is sufficient, reduce if needed
-    cost = shares * entry_price
-    while cost > cash and shares >= LOT_SIZE:
+    # Cost model: entry_price already includes slippage.
+    # Cash deduction = shares * entry_price + commission.
+    # Slippage is recorded for audit but NOT deducted separately.
+    trade_amount = shares * entry_price
+    while trade_amount > cash and shares >= LOT_SIZE:
         shares -= LOT_SIZE
-        cost = shares * entry_price
+        trade_amount = shares * entry_price
 
     if shares == 0:
         return ExecutionResult(
@@ -94,22 +98,20 @@ def execute_buy(
             skip_reason=f"现金不足，无法买入：{symbol}",
         )
 
-    # Calculate costs
-    commission = cost * commission_rate
-    slippage = shares * open_price * slippage_rate
-    total_cost = commission + slippage
+    commission = trade_amount * commission_rate
+    slippage = trade_amount - shares * open_price
+    total_cost = commission + slippage  # for audit reporting
 
-    cash_remaining = cash - cost - total_cost
+    cash_remaining = cash - trade_amount - commission
 
     if cash_remaining < 0:
-        # Try reducing shares
         while cash_remaining < 0 and shares >= LOT_SIZE:
             shares -= LOT_SIZE
-            cost = shares * entry_price
-            commission = cost * commission_rate
-            slippage = shares * open_price * slippage_rate
+            trade_amount = shares * entry_price
+            commission = trade_amount * commission_rate
+            slippage = trade_amount - shares * open_price
             total_cost = commission + slippage
-            cash_remaining = cash - cost - total_cost
+            cash_remaining = cash - trade_amount - commission
 
         if shares == 0:
             return ExecutionResult(
@@ -128,4 +130,5 @@ def execute_buy(
         slippage=round(slippage, 2),
         total_cost=round(total_cost, 2),
         cash_remaining=round(cash_remaining, 2),
+        raw_open_price=open_price,
     )

@@ -213,6 +213,47 @@ def test_stock_daily_non_empty_values_not_suspended(tmp_path: Path) -> None:
     assert active[0].is_suspended is False
 
 
+def test_stock_daily_is_st_read_from_csv(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+    write_manifest(snapshot_dir)
+
+    fields = STOCK_DAILY_FIELDS + ["is_st"]
+    write_csv(
+        snapshot_dir,
+        "stock_daily.csv",
+        fields,
+        [
+            ["2024-01-02", "000001", "10.5", "11.0", "10.3", "10.8", "100000", "1080000", "1"],
+            ["2024-01-02", "000002", "20.0", "21.0", "19.5", "20.5", "50000", "1025000", "0"],
+        ],
+    )
+    write_csv(snapshot_dir, "index_daily.csv", INDEX_DAILY_FIELDS, [["2024-01-02", "000300", "3500.0", "3520.0", "3490.0", "3510.0", "10000000", "35000000000"]])
+    write_csv(snapshot_dir, "industry_map.csv", ["symbol", "industry_level2"], [["000001", "银行"]])
+    write_csv(snapshot_dir, "industry_daily_amount.csv", ["trade_date", "industry_level2", "amount"], [["2024-01-02", "银行", "5000000000"]])
+    write_csv(snapshot_dir, "trading_calendar.csv", ["trade_date", "is_open"], [["2024-01-02", "1"]])
+
+    manifest = validate_raw_snapshot(snapshot_dir)
+    md = load_market_data(snapshot_dir, manifest)
+
+    st_stocks = [s for s in md.stock_daily if s.symbol == "000001"]
+    normal_stocks = [s for s in md.stock_daily if s.symbol == "000002"]
+    assert st_stocks[0].is_st is True
+    assert normal_stocks[0].is_st is False
+
+
+def test_stock_daily_is_st_defaults_false_without_column(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+    write_valid_snapshot_with_data(snapshot_dir)
+
+    manifest = validate_raw_snapshot(snapshot_dir)
+    md = load_market_data(snapshot_dir, manifest)
+
+    for s in md.stock_daily:
+        assert s.is_st is False
+
+
 # ---- index_daily 测试 ----
 
 
