@@ -12,6 +12,7 @@ from scripts.acceptance_check import (
     run_cli,
     validate_csv_outputs,
     validate_full_outputs,
+    validate_metadata,
     validate_real_outputs,
 )
 
@@ -344,3 +345,85 @@ def test_run_cli_missing_snapshot_reports_cli_failure(
 
     assert not report.passed
     assert any("CLI 运行失败" in error for error in report.errors)
+
+
+# ---- data_source metadata 校验测试 ----
+
+
+def test_validate_metadata_checks_data_source_consistency(monkeypatch: object, tmp_path: Path) -> None:
+    """run_metadata.json 的 data_source 必须与验收请求参数一致。"""
+    metadata = {
+        "name": "test",
+        "start_date": "2024-01-01",
+        "end_date": "2024-01-05",
+        "initial_cash": 1000000,
+        "code_version": "0.1.0",
+        "research_limitation": "MVP-1 是日线代理研究系统",
+        "outputs": [],
+        "data_source": "fixture",
+        "data_version": "test-v1",
+        "parameter_set": "ADR-0002 defaults",
+        "universe": "沪深 A 股核心股票池",
+    }
+    metadata_path = tmp_path / "run_metadata.json"
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+
+    # data_source 一致时通过
+    monkeypatch.setattr(sys, "argv", ["acceptance_check.py", "--profile", "real"])
+    args = parse_args()
+    report = AcceptanceReport()
+    validate_metadata(metadata_path, args, report)
+    assert report.passed
+
+
+def test_validate_metadata_fails_on_data_source_mismatch(monkeypatch: object, tmp_path: Path) -> None:
+    """data_source 不一致时报错。"""
+    metadata = {
+        "name": "test",
+        "start_date": "2024-01-01",
+        "end_date": "2024-01-05",
+        "initial_cash": 1000000,
+        "code_version": "0.1.0",
+        "research_limitation": "MVP-1 是日线代理研究系统",
+        "outputs": [],
+        "data_source": "a-stock-data",
+        "data_version": "test-v1",
+        "parameter_set": "ADR-0002 defaults",
+        "universe": "沪深 A 股核心股票池",
+    }
+    metadata_path = tmp_path / "run_metadata.json"
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["acceptance_check.py", "--profile", "real"])
+    args = parse_args()  # default data_source = fixture
+    report = AcceptanceReport()
+    validate_metadata(metadata_path, args, report)
+
+    assert not report.passed
+    assert any("data_source" in error and "不一致" in error for error in report.errors)
+
+
+def test_validate_metadata_requires_new_fields(monkeypatch: object, tmp_path: Path) -> None:
+    """run_metadata.json 必须包含 data_source, data_version, parameter_set, universe。"""
+    metadata = {
+        "name": "test",
+        "start_date": "2024-01-01",
+        "end_date": "2024-01-05",
+        "initial_cash": 1000000,
+        "code_version": "0.1.0",
+        "research_limitation": "MVP-1 是日线代理研究系统",
+        "outputs": [],
+    }
+    metadata_path = tmp_path / "run_metadata.json"
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["acceptance_check.py", "--profile", "real"])
+    args = parse_args()
+    report = AcceptanceReport()
+    validate_metadata(metadata_path, args, report)
+
+    assert not report.passed
+    assert any("data_source" in error for error in report.errors)
+    assert any("data_version" in error for error in report.errors)
+    assert any("parameter_set" in error for error in report.errors)
+    assert any("universe" in error for error in report.errors)

@@ -17,8 +17,7 @@ class ExitType(str, Enum):
 @dataclass
 class ExitSignal:
     exit_type: ExitType
-    exit_date: str
-    exit_price: float | None
+    signal_date: str
     reason: str
     deferred: bool = False
 
@@ -29,7 +28,25 @@ DEFAULT_TIME_STOP_DAYS = 3
 DEFAULT_MAX_HOLDING_DAYS = 30
 
 
-def check_exit(
+def _is_one_word_limit_down(bar: StockDaily) -> bool:
+    if bar.limit_down is None:
+        return False
+    if bar.open is None or bar.high is None or bar.low is None or bar.close is None:
+        return False
+    return (
+        bar.open == bar.high == bar.low == bar.close == bar.limit_down
+    )
+
+
+def _can_sell(bar: StockDaily) -> bool:
+    if bar.is_suspended:
+        return False
+    if _is_one_word_limit_down(bar):
+        return False
+    return True
+
+
+def detect_exit_signal(
     bars: list[StockDaily],
     entry_price: float,
     c_price: float,
@@ -42,12 +59,15 @@ def check_exit(
     time_stop_days: int = DEFAULT_TIME_STOP_DAYS,
     max_holding_days: int = DEFAULT_MAX_HOLDING_DAYS,
 ) -> ExitSignal | None:
+    """T 日收盘检测退出信号。
+
+    只返回信号类型和触发日，不返回实际卖出价。
+    实际卖出在 T+1 开盘通过 execute_sell() 执行。
+    """
     if not bars:
         return None
 
     current_bar = bars[-1]
-
-    # Check if can sell
     can_sell = _can_sell(current_bar)
 
     # Priority 1: Structure stop (below C point)
@@ -55,9 +75,8 @@ def check_exit(
         if current_bar.low < c_price:
             return ExitSignal(
                 exit_type=ExitType.STRUCTURE_STOP,
-                exit_date=current_date,
-                exit_price=current_bar.close if can_sell else None,
-                reason=f"结构止损：收盘 {current_bar.close} < C 点 {c_price}",
+                signal_date=current_date,
+                reason=f"结构止损：最低 {current_bar.low} < C 点 {c_price}",
                 deferred=not can_sell,
             )
 
@@ -67,8 +86,7 @@ def check_exit(
         if current_bar.close <= stop_price:
             return ExitSignal(
                 exit_type=ExitType.EMERGENCY_STOP,
-                exit_date=current_date,
-                exit_price=current_bar.close if can_sell else None,
+                signal_date=current_date,
                 reason=f"应急止损：收盘 {current_bar.close} <= 止损价 {stop_price:.2f}",
                 deferred=not can_sell,
             )
@@ -78,8 +96,7 @@ def check_exit(
         if current_bar.close is not None and current_bar.close <= entry_price:
             return ExitSignal(
                 exit_type=ExitType.TIME_STOP,
-                exit_date=current_date,
-                exit_price=current_bar.close if can_sell else None,
+                signal_date=current_date,
                 reason=f"时间止损：{trading_days_since_entry} 日无浮盈",
                 deferred=not can_sell,
             )
@@ -90,8 +107,7 @@ def check_exit(
         if current_bar.close <= drawdown_price:
             return ExitSignal(
                 exit_type=ExitType.TREND_EXIT,
-                exit_date=current_date,
-                exit_price=current_bar.close if can_sell else None,
+                signal_date=current_date,
                 reason=f"趋势退出：收盘 {current_bar.close} <= 回撤价 {drawdown_price:.2f}",
                 deferred=not can_sell,
             )
@@ -100,8 +116,7 @@ def check_exit(
     if trading_days_since_entry >= max_holding_days:
         return ExitSignal(
             exit_type=ExitType.MAX_HOLDING,
-            exit_date=current_date,
-            exit_price=current_bar.close if can_sell else None,
+            signal_date=current_date,
             reason=f"硬最大持仓：{trading_days_since_entry} 个交易日",
             deferred=not can_sell,
         )
@@ -109,10 +124,5 @@ def check_exit(
     return None
 
 
-def _can_sell(bar: StockDaily) -> bool:
-    if bar.is_suspended:
-        return False
-    if bar.close is not None and bar.limit_down is not None:
-        if bar.close <= bar.limit_down:
-            return False
-    return True
+# 保持旧名 check_exit 作为 detect_exit_signal 的别名，向后兼容
+check_exit = detect_exit_signal

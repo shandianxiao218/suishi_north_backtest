@@ -95,6 +95,17 @@ def _to_float(value: str | None) -> float | None:
     return float(value)
 
 
+def _derive_is_st(row: dict[str, str]) -> bool:
+    if "is_st" in row:
+        val = row["is_st"].strip().lower()
+        if val:
+            return val in ("true", "1", "yes")
+    stock_name = row.get("stock_name", "").strip()
+    if stock_name:
+        return stock_name.startswith("ST") or stock_name.startswith("*ST")
+    return False
+
+
 def _load_stock_daily(path: Path) -> list[StockDaily]:
     rows = _read_csv_rows(path)
     result = []
@@ -110,7 +121,7 @@ def _load_stock_daily(path: Path) -> list[StockDaily]:
                 close=_to_float(row.get("close")),
                 volume=_to_float(row.get("volume")),
                 amount=_to_float(row.get("amount")),
-                is_st=False,
+                is_st=_derive_is_st(row),
                 limit_up=_to_float(row.get("limit_up")),
                 limit_down=_to_float(row.get("limit_down")),
                 is_suspended=not has_open,

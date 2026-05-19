@@ -316,7 +316,8 @@ def test_trading_calendar_sorted(tmp_path: Path) -> None:
 # ---- stock_daily 衍生字段测试 ----
 
 
-def test_stock_daily_is_st_defaults_false(tmp_path: Path) -> None:
+def test_stock_daily_is_st_defaults_false_when_no_st_column(tmp_path: Path) -> None:
+    """没有 is_st 列也没有 stock_name 列时，is_st 默认为 False。"""
     snapshot_dir = tmp_path / "raw-snapshot"
     snapshot_dir.mkdir()
     write_valid_snapshot_with_data(snapshot_dir)
@@ -327,6 +328,56 @@ def test_stock_daily_is_st_defaults_false(tmp_path: Path) -> None:
     for s in md.stock_daily:
         assert isinstance(s.is_st, bool)
         assert s.is_st is False
+
+
+def test_market_data_reads_is_st_or_derives_from_stock_name(tmp_path: Path) -> None:
+    """is_st 可从 CSV 的 is_st 字段直接读取，或从 stock_name 推导。"""
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+    write_manifest(snapshot_dir)
+
+    fields = STOCK_DAILY_FIELDS + ["stock_name", "is_st"]
+    write_csv(
+        snapshot_dir,
+        "stock_daily.csv",
+        fields,
+        [
+            # 普通股票
+            ["2024-01-02", "000001", "10.5", "11.0", "10.3", "10.8", "100000", "1080000", "平安银行", ""],
+            # ST 股票（从 stock_name 推导）
+            ["2024-01-02", "000002", "5.0", "5.2", "4.9", "5.1", "50000", "255000", "ST万科", ""],
+            # *ST 股票（从 stock_name 推导）
+            ["2024-01-02", "000003", "3.0", "3.1", "2.9", "3.0", "30000", "90000", "*ST金科", ""],
+            # is_st 字段显式为 true
+            ["2024-01-02", "000004", "2.0", "2.1", "1.9", "2.0", "20000", "40000", "某退市股", "true"],
+            # is_st 字段显式为 1
+            ["2024-01-02", "000005", "4.0", "4.1", "3.9", "4.0", "40000", "160000", "另一退市股", "1"],
+            # is_st=false，非 ST
+            ["2024-01-02", "000006", "15.0", "15.5", "14.8", "15.2", "80000", "1216000", "贵州茅台", "false"],
+        ],
+    )
+    write_csv(snapshot_dir, "index_daily.csv", INDEX_DAILY_FIELDS, [["2024-01-02", "000300", "3500.0", "3520.0", "3490.0", "3510.0", "10000000", "35000000000"]])
+    write_csv(snapshot_dir, "industry_map.csv", ["symbol", "industry_level2"], [["000001", "银行"]])
+    write_csv(snapshot_dir, "industry_daily_amount.csv", ["trade_date", "industry_level2", "amount"], [["2024-01-02", "银行", "5000000000"]])
+    write_csv(snapshot_dir, "trading_calendar.csv", ["trade_date", "is_open"], [["2024-01-02", "1"]])
+
+    manifest = validate_raw_snapshot(snapshot_dir)
+    md = load_market_data(snapshot_dir, manifest)
+
+    by_symbol = {s.symbol: s for s in md.stock_daily}
+
+    # 普通股票
+    assert by_symbol["000001"].is_st is False
+    # stock_name 以 ST 开头
+    assert by_symbol["000002"].is_st is True
+    # stock_name 以 *ST 开头
+    assert by_symbol["000003"].is_st is True
+    # is_st 字段为 true
+    assert by_symbol["000004"].is_st is True
+    # is_st 字段为 1
+    assert by_symbol["000005"].is_st is True
+    # is_st 字段为 false
+    assert by_symbol["000006"].is_st is False
 
 
 def test_stock_daily_limit_fields_default_none(tmp_path: Path) -> None:

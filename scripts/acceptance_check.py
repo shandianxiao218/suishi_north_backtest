@@ -264,6 +264,10 @@ def validate_metadata(path: Path, args: argparse.Namespace, report: AcceptanceRe
         "code_version",
         "research_limitation",
         "outputs",
+        "data_source",
+        "data_version",
+        "parameter_set",
+        "universe",
     ]
     for field_name in required_fields:
         if field_name not in metadata:
@@ -275,6 +279,12 @@ def validate_metadata(path: Path, args: argparse.Namespace, report: AcceptanceRe
         report.fail("run_metadata.json 的 end_date 与验收参数不一致。")
     if str(metadata.get("initial_cash")) != str(args.initial_cash):
         report.fail("run_metadata.json 的 initial_cash 与验收参数不一致。")
+
+    if metadata.get("data_source") != args.data_source:
+        report.fail(
+            f"run_metadata.json 的 data_source 与验收参数不一致："
+            f"metadata={metadata.get('data_source')}，请求={args.data_source}"
+        )
 
     limitation = str(metadata.get("research_limitation", ""))
     if RESEARCH_LIMITATION_TEXT not in limitation:
@@ -431,6 +441,10 @@ def read_csv_headers(path: Path) -> set[str]:
 def print_report(report: AcceptanceReport, args: argparse.Namespace) -> None:
     print("\n=== MVP-1 验收结果 ===")
     print(f"验收模式：{args.profile}")
+    print(f"数据源：{args.data_source}")
+    if args.data_snapshot:
+        print(f"数据快照：{args.data_snapshot}")
+    print(f"数据目录：{args.data_dir}")
     print(f"输出目录：{args.output_dir}")
 
     print("\n[NOTES]")
