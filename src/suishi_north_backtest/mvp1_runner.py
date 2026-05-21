@@ -136,16 +136,6 @@ def run_mvp1_from_raw_snapshot(
     # 合并两条轨道的净值曲线（按日期排序）
     all_equity.sort(key=lambda p: str(p.get("date", "")))
 
-    # 计算合并指标
-    ending_equity = max(
-        (float(p["equity"]) for p in all_equity),
-        default=float(config.initial_cash),
-    )
-    total_return = _safe_pct_change(config.initial_cash, ending_equity)
-    max_drawdown = _max_drawdown([float(p["equity"]) for p in all_equity])
-    win_rate = _win_rate(all_trades)
-    profit_factor = _profit_factor(all_trades)
-
     # 各轨道独立指标
     ps_trades = [t for t in all_trades if t.trade_id.startswith("PURE")]
     mf_trades = [t for t in all_trades if t.trade_id.startswith("MAIN")]
@@ -161,6 +151,15 @@ def run_mvp1_from_raw_snapshot(
         float(mf_equity[-1]["equity"]) if mf_equity else float(config.initial_cash),
     )
 
+    # 主口径：以 mainline_filtered 作为默认主策略
+    primary_equity = mf_equity if mf_equity else ps_equity
+    ending_equity = float(primary_equity[-1]["equity"]) if primary_equity else float(config.initial_cash)
+    total_return = _safe_pct_change(config.initial_cash, ending_equity)
+    primary_drawdown_values = [float(p["equity"]) for p in primary_equity]
+    max_drawdown = _max_drawdown(primary_drawdown_values)
+    win_rate = _win_rate(all_trades)
+    profit_factor = _profit_factor(all_trades)
+
     metrics = {
         "name": config.name,
         "initial_cash": config.initial_cash,
@@ -172,6 +171,7 @@ def run_mvp1_from_raw_snapshot(
         "trade_count": len(all_trades),
         "candidate_count": len(candidates),
         "skipped_count": len(all_skipped),
+        "primary_track": "mainline_filtered",
         "tracks": {
             "pure_structure": {
                 "trade_count": len(ps_trades),
@@ -295,6 +295,7 @@ def _simulate_portfolio_for_track(
     bars_by_symbol = _bars_by_symbol(market_data.stock_daily)
 
     # 按轨道类型过滤候选：pure_structure 接受所有，mainline_filtered 只接受强主线
+    skipped_rows: list[dict[str, object]] = []
     if track_name == "mainline_filtered" and mainline_map and industry_by_symbol:
         filtered_candidates = []
         for c in candidates:
@@ -303,11 +304,17 @@ def _simulate_portfolio_for_track(
             status_info = date_data.get(industry)
             if status_info and status_info[0] == MainlineStatus.STRONG:
                 filtered_candidates.append(c)
+            else:
+                skipped_rows.append({
+                    "signal_date": c.signal_date,
+                    "track": track_name,
+                    "symbol": c.symbol,
+                    "reason": f"非强主线（{industry}），mainline_filtered 跳过",
+                })
     else:
         filtered_candidates = list(candidates)
     trades: list[ClosedTrade] = []
     holdings: list[dict[str, object]] = []
-    skipped_rows: list[dict[str, object]] = []
     equity_points: list[dict[str, object]] = [
         {
             "date": config.start_date,
@@ -421,12 +428,17 @@ def _simulate_portfolio_for_track(
         )
 
     if not filtered_candidates:
+        skip_reason = (
+            "mainline_filtered 过滤后无候选（原始候选可能存在但非强主线）"
+            if track_name == "mainline_filtered" and candidates
+            else "raw snapshot 未产生候选信号"
+        )
         skipped_rows.append(
             {
                 "signal_date": config.end_date,
                 "track": track_name,
                 "symbol": "ALL",
-                "reason": "raw snapshot 未产生候选信号",
+                "reason": skip_reason,
             }
         )
 
