@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from suishi_north_backtest.signals import CandidateSignal
+
+if TYPE_CHECKING:
+    from suishi_north_backtest.parameters import StrategyParameters
 
 
 @dataclass
@@ -50,7 +54,14 @@ def execute_buy(
     stop_loss_pct: float = DEFAULT_STOP_LOSS_PCT,
     commission_rate: float = DEFAULT_COMMISSION_RATE,
     slippage_rate: float = DEFAULT_SLIPPAGE_RATE,
+    parameters: StrategyParameters | None = None,
 ) -> ExecutionResult:
+    if parameters is not None:
+        risk_pct = parameters.risk_pct
+        stop_loss_pct = parameters.stop_loss_pct
+        commission_rate = parameters.commission_rate
+        slippage_rate = parameters.buy_slippage_rate
+
     symbol = candidate.symbol
 
     if open_price is None:
@@ -199,7 +210,13 @@ def execute_sell(
     commission_rate: float = DEFAULT_COMMISSION_RATE,
     stamp_tax_rate: float = DEFAULT_STAMP_TAX_RATE,
     slippage_rate: float = DEFAULT_SLIPPAGE_RATE,
+    parameters: StrategyParameters | None = None,
 ) -> SellResult:
+    if parameters is not None:
+        commission_rate = parameters.commission_rate
+        stamp_tax_rate = parameters.stamp_tax_rate
+        slippage_rate = parameters.sell_slippage_rate
+
     if is_suspended or open_price is None:
         return SellResult(
             executed=False,

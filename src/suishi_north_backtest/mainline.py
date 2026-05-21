@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from suishi_north_backtest.market_data import IndustryDailyAmount
+
+if TYPE_CHECKING:
+    from suishi_north_backtest.parameters import StrategyParameters
 
 
 class MainlineStatus(str, Enum):
@@ -35,7 +39,14 @@ def compute_mainlines(
     strong_days: int = STRONG_CONSECUTIVE_DAYS,
     observation_window: int = OBSERVATION_WINDOW_DAYS,
     observation_min: int = OBSERVATION_MIN_COUNT,
+    parameters: StrategyParameters | None = None,
 ) -> list[IndustryMainlineEntry]:
+    if parameters is not None:
+        top_n = parameters.mainline_top_n
+        strong_days = parameters.strong_mainline_days
+        observation_window = parameters.observation_window_days
+        observation_min = parameters.observation_min_count
+
     if not data:
         return []
 

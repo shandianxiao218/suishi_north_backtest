@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from suishi_north_backtest.market_data import StockDaily
+
+if TYPE_CHECKING:
+    from suishi_north_backtest.parameters import StrategyParameters
 
 
 @dataclass
@@ -35,7 +39,14 @@ def find_candidates(
     c_window_min: int = DEFAULT_C_WINDOW_MIN,
     c_window_max: int = DEFAULT_C_WINDOW_MAX,
     signal_distance_max_pct: float = DEFAULT_SIGNAL_DISTANCE_MAX_PCT,
+    parameters: StrategyParameters | None = None,
 ) -> list[CandidateSignal]:
+    if parameters is not None:
+        ab_min_gain_pct = parameters.ab_min_gain_pct_for_signals
+        bc_max_retracement_pct = parameters.bc_max_retracement_pct_for_signals
+        c_window_min = parameters.c_window_min_days
+        c_window_max = parameters.c_window_max_days
+        signal_distance_max_pct = parameters.signal_distance_to_c_max_pct_for_signals
     if len(bars) < 5:
         return []
 

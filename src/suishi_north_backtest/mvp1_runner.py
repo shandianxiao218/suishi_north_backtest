@@ -11,6 +11,7 @@ from suishi_north_backtest.execution import execute_buy, execute_sell
 from suishi_north_backtest.exits import detect_exit_signal
 from suishi_north_backtest.mainline import MainlineStatus, compute_mainlines
 from suishi_north_backtest.market_data import MarketData, StockDaily, load_market_data
+from suishi_north_backtest.parameters import StrategyParameters, default_mvp1_parameters
 from suishi_north_backtest.portfolio import PortfolioAction, select_candidates
 from suishi_north_backtest.raw_data import validate_raw_snapshot
 from suishi_north_backtest.signals import CandidateSignal, find_candidates
@@ -66,6 +67,7 @@ REQUIRED_PERIODS = ["sample_in", "sample_out", "recent"]
 def run_mvp1_from_raw_snapshot(
     raw_snapshot_dir: Path,
     config: BacktestConfig,
+    parameters: StrategyParameters | None = None,
 ) -> Mvp1DataSet:
     """从 raw a-stock-data 快照生成 MVP-1 统一数据集。
 
@@ -74,6 +76,7 @@ def run_mvp1_from_raw_snapshot(
     它不负责写文件；文件输出仍由 engine 处理。
     """
 
+    parameters = parameters or default_mvp1_parameters()
     raw_snapshot_dir = Path(raw_snapshot_dir)
     manifest = validate_raw_snapshot(raw_snapshot_dir)
     market_data = load_market_data(raw_snapshot_dir, manifest)
@@ -85,7 +88,7 @@ def run_mvp1_from_raw_snapshot(
     }
     industry_by_symbol = {entry.symbol: entry.industry_level2 for entry in universe_entries}
 
-    mainlines = compute_mainlines(market_data.industry_daily_amount, as_of=as_of)
+    mainlines = compute_mainlines(market_data.industry_daily_amount, as_of=as_of, parameters=parameters)
     mainline_status_by_key = {
         (entry.trade_date, entry.industry_level2): entry.status for entry in mainlines
     }
@@ -94,7 +97,7 @@ def run_mvp1_from_raw_snapshot(
     }
 
     candidates = _filter_candidates(
-        find_candidates(market_data.stock_daily, as_of=as_of),
+        find_candidates(market_data.stock_daily, as_of=as_of, parameters=parameters),
         tradable_symbols_by_date,
     )
     candidate_rows = _candidate_rows(
@@ -108,6 +111,7 @@ def run_mvp1_from_raw_snapshot(
         candidates=candidates,
         market_data=market_data,
         config=config,
+        parameters=parameters,
     )
 
     ending_equity = equity_points[-1]["equity"] if equity_points else config.initial_cash
@@ -144,11 +148,12 @@ def run_mvp1_from_raw_snapshot(
             "recent": ["2024-01-01", as_of],
         },
         "audit_note": "raw snapshot generated MVP-1 dataset",
+        "parameters": parameters.to_metadata(),
     }
 
     return Mvp1DataSet(
         data_version=manifest.data_version,
-        parameter_set="ADR-0002-defaults-raw-run",
+        parameter_set=parameters.name,
         universe=f"raw-a-stock-data-universe-{len({entry.symbol for entry in universe_entries})}",
         equity_curve=equity_points,
         trades=_trade_rows(trades),
@@ -236,6 +241,7 @@ def _simulate_portfolio(
     candidates: list[CandidateSignal],
     market_data: MarketData,
     config: BacktestConfig,
+    parameters: StrategyParameters,
 ) -> tuple[
     list[ClosedTrade],
     list[dict[str, object]],
@@ -268,6 +274,7 @@ def _simulate_portfolio(
             current_holdings=current_holdings,
             opened_today=opened_today_by_date.get(candidate.signal_date, 0),
             opened_this_week=opened_week_by_key.get(week_key, 0),
+            parameters=parameters,
         )
         open_action = _first_open_action(actions)
         if open_action is None:
@@ -288,6 +295,7 @@ def _simulate_portfolio(
             low=entry_bar.low,
             close=entry_bar.close,
             limit_up=entry_bar.limit_up,
+            parameters=parameters,
         )
         if not buy.executed:
             skipped_rows.append(_skip_row(candidate, buy.skip_reason))
@@ -313,6 +321,7 @@ def _simulate_portfolio(
         trade = _close_position_if_possible(
             position=position,
             bars=bars_by_symbol.get(candidate.symbol, []),
+            parameters=parameters,
         )
         if trade is not None:
             cash = position.cash_after_entry + trade.sell_cash_proceeds
@@ -431,6 +440,7 @@ def _next_bar_after(bars: list[StockDaily], trade_date: str) -> StockDaily | Non
 def _close_position_if_possible(
     position: OpenPosition,
     bars: list[StockDaily],
+    parameters: StrategyParameters,
 ) -> ClosedTrade | None:
     after_entry = [bar for bar in bars if bar.trade_date > position.entry_date]
     highest_close = position.highest_close_since_entry
@@ -445,6 +455,7 @@ def _close_position_if_possible(
             entry_date=position.entry_date,
             current_date=bar.trade_date,
             trading_days_since_entry=index + 1,
+            parameters=parameters,
         )
         if signal is None:
             continue
@@ -460,6 +471,7 @@ def _close_position_if_possible(
             close=sell_bar.close,
             limit_down=sell_bar.limit_down,
             is_suspended=sell_bar.is_suspended,
+            parameters=parameters,
         )
         if not sell.executed:
             continue

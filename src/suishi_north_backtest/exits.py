@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from suishi_north_backtest.market_data import StockDaily
+
+if TYPE_CHECKING:
+    from suishi_north_backtest.parameters import StrategyParameters
 
 
 class ExitType(str, Enum):
@@ -58,7 +62,13 @@ def detect_exit_signal(
     trend_exit_pct: float = DEFAULT_TREND_EXIT_PCT,
     time_stop_days: int = DEFAULT_TIME_STOP_DAYS,
     max_holding_days: int = DEFAULT_MAX_HOLDING_DAYS,
+    parameters: StrategyParameters | None = None,
 ) -> ExitSignal | None:
+    if parameters is not None:
+        emergency_stop_pct = parameters.emergency_stop_pct
+        trend_exit_pct = parameters.trend_exit_pct
+        time_stop_days = parameters.time_stop_days
+        max_holding_days = parameters.max_holding_days
     """T 日收盘检测退出信号。
 
     只返回信号类型和触发日，不返回实际卖出价。

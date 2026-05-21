@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from suishi_north_backtest.signals import CandidateSignal
+
+if TYPE_CHECKING:
+    from suishi_north_backtest.parameters import StrategyParameters
 
 
 @dataclass
@@ -27,7 +31,12 @@ def select_candidates(
     max_holdings: int = DEFAULT_MAX_HOLDINGS,
     daily_open_limit: int = DEFAULT_DAILY_OPEN_LIMIT,
     weekly_open_limit: int = DEFAULT_WEEKLY_OPEN_LIMIT,
+    parameters: StrategyParameters | None = None,
 ) -> list[PortfolioAction]:
+    if parameters is not None:
+        max_holdings = parameters.max_holdings
+        daily_open_limit = parameters.daily_open_limit
+        weekly_open_limit = parameters.weekly_open_limit
     if not candidates:
         return []
 
