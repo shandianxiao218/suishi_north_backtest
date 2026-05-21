@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from suishi_north_backtest.signals import CandidateSignal
+
+if TYPE_CHECKING:
+    from suishi_north_backtest.parameters import StrategyParameters
 
 
 @dataclass
@@ -50,7 +54,17 @@ def execute_buy(
     stop_loss_pct: float = DEFAULT_STOP_LOSS_PCT,
     commission_rate: float = DEFAULT_COMMISSION_RATE,
     slippage_rate: float = DEFAULT_SLIPPAGE_RATE,
+    parameters: StrategyParameters | None = None,
 ) -> ExecutionResult:
+    if parameters is not None:
+        risk_pct = parameters.risk_pct
+        stop_loss_pct = parameters.stop_loss_pct
+        commission_rate = parameters.commission_rate
+        slippage_rate = parameters.buy_slippage_rate
+        lot_size = parameters.lot_size
+    else:
+        lot_size = LOT_SIZE
+
     symbol = candidate.symbol
 
     if open_price is None:
@@ -95,7 +109,7 @@ def execute_buy(
         )
 
     raw_shares = risk_amount / per_share_risk
-    shares = int(raw_shares // LOT_SIZE) * LOT_SIZE
+    shares = int(raw_shares // lot_size) * lot_size
 
     if shares == 0:
         return ExecutionResult(
@@ -107,8 +121,8 @@ def execute_buy(
 
     # 成本 = shares * entry_price（含滑点）
     cost = shares * entry_price
-    while cost > cash and shares >= LOT_SIZE:
-        shares -= LOT_SIZE
+    while cost > cash and shares >= lot_size:
+        shares -= lot_size
         cost = shares * entry_price
 
     if shares == 0:
@@ -129,8 +143,8 @@ def execute_buy(
     cash_remaining = cash - cost - total_cost
 
     if cash_remaining < 0:
-        while cash_remaining < 0 and shares >= LOT_SIZE:
-            shares -= LOT_SIZE
+        while cash_remaining < 0 and shares >= lot_size:
+            shares -= lot_size
             cost = shares * entry_price
             commission = cost * commission_rate
             slippage = shares * slippage_audit
@@ -199,7 +213,13 @@ def execute_sell(
     commission_rate: float = DEFAULT_COMMISSION_RATE,
     stamp_tax_rate: float = DEFAULT_STAMP_TAX_RATE,
     slippage_rate: float = DEFAULT_SLIPPAGE_RATE,
+    parameters: StrategyParameters | None = None,
 ) -> SellResult:
+    if parameters is not None:
+        commission_rate = parameters.commission_rate
+        stamp_tax_rate = parameters.stamp_tax_rate
+        slippage_rate = parameters.sell_slippage_rate
+
     if is_suspended or open_price is None:
         return SellResult(
             executed=False,
