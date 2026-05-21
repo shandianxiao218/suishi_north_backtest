@@ -6,18 +6,14 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from suishi_north_backtest.output_contract import mvp1_csv_specs
 
-REQUIRED_SNAPSHOT_FILES = [
-    "equity_curve.csv",
-    "trades.csv",
-    "skipped_trades.csv",
-    "candidates.csv",
-    "holdings.csv",
-    "benchmark_comparison.csv",
-    "track_comparison.csv",
-    "sensitivity.csv",
-    "metrics.json",
-]
+
+def _required_snapshot_files() -> list[str]:
+    return [spec.filename for spec in mvp1_csv_specs()] + ["metrics.json"]
+
+
+REQUIRED_SNAPSHOT_FILES = _required_snapshot_files()
 
 
 @dataclass(frozen=True)

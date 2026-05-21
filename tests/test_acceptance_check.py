@@ -33,8 +33,8 @@ def test_validate_full_outputs_reports_missing_categories(tmp_path: Path) -> Non
     validate_full_outputs(tmp_path, report)
 
     assert not report.passed
-    assert any("指标/绩效输出" in error for error in report.errors)
-    assert any("参数敏感性输出" in error for error in report.errors)
+    assert any("metrics.json" in error for error in report.errors)
+    assert any("sensitivity.csv" in error for error in report.errors)
 
 
 def test_validate_csv_outputs_accepts_utf8_sig_csv_files(tmp_path: Path) -> None:

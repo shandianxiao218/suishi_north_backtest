@@ -75,6 +75,7 @@ def test_a_stock_data_provider_reads_snapshot_directory(tmp_path: Path) -> None:
     assert data_set.universe == "沪深 A 股核心股票池"
     assert data_set.trades[0]["symbol"] == "000001.SZ"
     assert data_set.candidates[0]["signal_date"] == "2024-01-02"
+    assert data_set.candidates[0]["track"] == "mainline_filtered"
     assert data_set.metrics["trade_count"] == 1
 
 
@@ -146,13 +147,57 @@ def create_snapshot(root: Path, name: str) -> Path:
         {"trade_count": 1, "total_return": 0.01},
     )
     write_csv(snapshot_dir / "equity_curve.csv", ["date", "cash", "equity", "drawdown", "track"], [])
-    write_csv(snapshot_dir / "trades.csv", ["symbol", "track"], [{"symbol": "000001.SZ", "track": "mainline_filtered"}])
-    write_csv(snapshot_dir / "skipped_trades.csv", ["reason"], [])
-    write_csv(snapshot_dir / "candidates.csv", ["signal_date", "symbol"], [{"signal_date": "2024-01-02", "symbol": "000001.SZ"}])
-    write_csv(snapshot_dir / "holdings.csv", ["date", "symbol"], [])
-    write_csv(snapshot_dir / "benchmark_comparison.csv", ["period", "benchmark"], [])
-    write_csv(snapshot_dir / "track_comparison.csv", ["metric"], [])
-    write_csv(snapshot_dir / "sensitivity.csv", ["parameter"], [])
+    write_csv(
+        snapshot_dir / "trades.csv",
+        ["trade_id", "track", "symbol", "entry_signal_date", "entry_date", "entry_price",
+         "entry_shares", "exit_trigger_date", "exit_date", "exit_price", "exit_reason",
+         "commission", "stamp_tax", "slippage_cost", "total_cost", "gross_pnl", "net_pnl",
+         "first_target_achieved", "audit_note"],
+        [{"trade_id": "T-001", "track": "mainline_filtered", "symbol": "000001.SZ",
+          "entry_signal_date": "2024-01-02", "entry_date": "2024-01-03", "entry_price": "10.0",
+          "entry_shares": "1000", "exit_trigger_date": "", "exit_date": "", "exit_price": "",
+          "exit_reason": "", "commission": "3.0", "stamp_tax": "0", "slippage_cost": "5.0",
+          "total_cost": "8.0", "gross_pnl": "0", "net_pnl": "-8.0",
+          "first_target_achieved": "false", "audit_note": "test"}],
+    )
+    write_csv(snapshot_dir / "skipped_trades.csv", ["signal_date", "track", "symbol", "reason"], [])
+    write_csv(
+        snapshot_dir / "candidates.csv",
+        ["signal_date", "track", "symbol", "industry_level2", "is_strong_mainline",
+         "a_date", "a_price", "b_date", "b_price", "c_date", "c_price",
+         "ab_gain_pct", "bc_retracement_pct", "distance_to_c_low_pct",
+         "weekly_filter_passed", "annual_filter_passed", "score", "audit_note"],
+        [{"signal_date": "2024-01-02", "track": "mainline_filtered", "symbol": "000001.SZ",
+          "industry_level2": "test_industry", "is_strong_mainline": "true",
+          "a_date": "2023-12-20", "a_price": "8.0", "b_date": "2023-12-28", "b_price": "10.0",
+          "c_date": "2024-01-02", "c_price": "9.0", "ab_gain_pct": "25.0",
+          "bc_retracement_pct": "50.0", "distance_to_c_low_pct": "3.0",
+          "weekly_filter_passed": "true", "annual_filter_passed": "true",
+          "score": "85.0", "audit_note": "test"}],
+    )
+    write_csv(
+        snapshot_dir / "holdings.csv",
+        ["date", "track", "symbol", "shares", "cost_basis", "market_value",
+         "unrealized_pnl", "holding_days", "highest_close_since_entry", "audit_note"],
+        [],
+    )
+    write_csv(
+        snapshot_dir / "benchmark_comparison.csv",
+        ["period", "benchmark", "strategy_return", "benchmark_return", "excess_return",
+         "max_drawdown", "return_drawdown_ratio", "audit_note"],
+        [],
+    )
+    write_csv(
+        snapshot_dir / "track_comparison.csv",
+        ["metric", "pure_structure_track", "mainline_filtered_track", "delta", "audit_note"],
+        [],
+    )
+    write_csv(
+        snapshot_dir / "sensitivity.csv",
+        ["parameter", "baseline_value", "variant_value", "sample_in_metric",
+         "sample_out_metric", "overfit_risk", "accepted", "audit_note"],
+        [],
+    )
     return snapshot_dir
 
 
