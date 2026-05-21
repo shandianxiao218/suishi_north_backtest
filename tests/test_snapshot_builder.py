@@ -53,7 +53,7 @@ def test_build_snapshot_from_output_dir_rejects_missing_source_dir(tmp_path: Pat
 def test_build_snapshot_from_output_dir_rejects_missing_required_files(tmp_path: Path) -> None:
     source_output_dir = tmp_path / "outputs" / "mvp1"
     source_output_dir.mkdir(parents=True)
-    write_json(source_output_dir / "metrics.json", {"trade_count": 0})
+    write_json(source_output_dir / "metrics.json", {"name": "test", "initial_cash": 1000000, "ending_equity": 1000000, "total_return": 0.0, "max_drawdown": 0.0, "trade_count": 0})
 
     with pytest.raises(FileNotFoundError, match="missing required files"):
         build_snapshot_from_output_dir(

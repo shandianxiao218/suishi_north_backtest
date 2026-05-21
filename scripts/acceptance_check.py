@@ -11,50 +11,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# 将 src 加入 path，确保 acceptance_check 可以导入 suishi_north_backtest
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_SRC_PATH = str(_REPO_ROOT / "src")
+if _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
-REQUIRED_SMOKE_OUTPUTS = [
-    "equity_curve.csv",
-    "trades.csv",
-    "skipped_trades.csv",
-    "run_metadata.json",
-]
+from suishi_north_backtest.output_contract import (
+    CSV_ENCODING,
+    mvp1_csv_specs,
+    mvp1_required_files,
+    validate_output_contract,
+)
 
-FULL_OUTPUT_CATEGORIES = {
-    "指标/绩效输出": [
-        "metrics.json",
-        "performance_metrics.json",
-        "summary_metrics.json",
-        "performance_summary.json",
-    ],
-    "候选/信号审计输出": [
-        "candidates.csv",
-        "signals.csv",
-        "candidate_signals.csv",
-        "audit_candidates.csv",
-    ],
-    "持仓/组合状态输出": [
-        "holdings.csv",
-        "positions.csv",
-        "portfolio_positions.csv",
-    ],
-    "指数基准对比输出": [
-        "benchmark_comparison.csv",
-        "benchmarks.csv",
-        "benchmark_metrics.json",
-    ],
-    "双轨组合对比输出": [
-        "track_comparison.csv",
-        "strategy_tracks.csv",
-        "track_metrics.json",
-    ],
-    "参数敏感性输出": [
-        "sensitivity.csv",
-        "parameter_sensitivity.csv",
-        "sensitivity_report.json",
-    ],
-}
 
-CSV_OUTPUTS = ["equity_curve.csv", "trades.csv", "skipped_trades.csv"]
 RESEARCH_LIMITATION_TEXT = "MVP-1 是日线代理研究系统"
 PLACEHOLDER_MARKERS = [
     "acceptance-placeholder",
@@ -150,6 +120,10 @@ def main() -> int:
     if not report.errors:
         run_cli(repo_root, args, report)
 
+    contract_errors = validate_output_contract(args.output_dir, profile=args.profile)
+    for error in contract_errors:
+        report.fail(error)
+
     validate_smoke_outputs(args.output_dir, report)
     validate_metadata(args.output_dir / "run_metadata.json", args, report)
     validate_csv_outputs(args.output_dir, report)
@@ -239,7 +213,7 @@ def run_cli(repo_root: Path, args: argparse.Namespace, report: AcceptanceReport)
 
 
 def validate_smoke_outputs(output_dir: Path, report: AcceptanceReport) -> None:
-    for filename in REQUIRED_SMOKE_OUTPUTS:
+    for filename in mvp1_required_files("smoke"):
         path = output_dir / filename
         if not path.exists():
             report.fail(f"缺少必需输出文件：{path}")
@@ -292,7 +266,8 @@ def validate_metadata(path: Path, args: argparse.Namespace, report: AcceptanceRe
 
 
 def validate_csv_outputs(output_dir: Path, report: AcceptanceReport) -> None:
-    for filename in CSV_OUTPUTS:
+    csv_filenames = [spec.filename for spec in mvp1_csv_specs()]
+    for filename in csv_filenames:
         path = output_dir / filename
         if not path.exists():
             continue
@@ -300,7 +275,7 @@ def validate_csv_outputs(output_dir: Path, report: AcceptanceReport) -> None:
         if not content.startswith(b"\xef\xbb\xbf"):
             report.fail(f"CSV 未使用 utf-8-sig，Windows/Excel 可能乱码：{path}")
         try:
-            rows = list(csv.reader(path.open("r", encoding="utf-8-sig", newline="")))
+            rows = list(csv.reader(path.open("r", encoding=CSV_ENCODING, newline="")))
         except UnicodeDecodeError as error:
             report.fail(f"CSV 无法按 utf-8-sig 读取：{path}，错误：{error}")
             continue
@@ -309,12 +284,13 @@ def validate_csv_outputs(output_dir: Path, report: AcceptanceReport) -> None:
 
 
 def validate_full_outputs(output_dir: Path, report: AcceptanceReport) -> None:
-    for category, candidates in FULL_OUTPUT_CATEGORIES.items():
-        if not any((output_dir / filename).exists() for filename in candidates):
-            report.fail(
-                f"full 验收缺少{category}。接受的文件名之一："
-                + ", ".join(candidates)
-            )
+    smoke_files = set(mvp1_required_files("smoke"))
+    full_files = mvp1_required_files("full")
+    for filename in full_files:
+        if filename in smoke_files:
+            continue
+        if not (output_dir / filename).exists():
+            report.fail(f"full 验收缺少必需文件：{filename}")
 
 
 def validate_audit_headers(output_dir: Path, report: AcceptanceReport) -> None:

@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from suishi_north_backtest.config import BacktestConfig
+from suishi_north_backtest.output_contract import (
+    CSV_ENCODING,
+    mvp1_csv_specs,
+    validate_csv_header,
+)
 
 
 @dataclass(frozen=True)
@@ -205,21 +210,13 @@ class FixtureDataProvider:
 class AStockDataProvider:
     """读取 a-stock-data 本地快照目录。"""
 
-    REQUIRED_CSV_FILES = {
-        "equity_curve": "equity_curve.csv",
-        "trades": "trades.csv",
-        "skipped_trades": "skipped_trades.csv",
-        "candidates": "candidates.csv",
-        "holdings": "holdings.csv",
-        "benchmark_comparison": "benchmark_comparison.csv",
-        "track_comparison": "track_comparison.csv",
-        "sensitivity": "sensitivity.csv",
-    }
+    REQUIRED_CSV_FILES = {spec.filename for spec in mvp1_csv_specs()}
 
     def load(self, config: BacktestConfig) -> Mvp1DataSet:
         snapshot_dir = self._resolve_snapshot_dir(config)
         manifest = self._read_manifest(snapshot_dir)
         self._validate_required_files(snapshot_dir)
+        self._validate_csv_headers(snapshot_dir)
         metrics = _read_json(snapshot_dir / "metrics.json")
         return Mvp1DataSet(
             data_version=str(manifest.get("data_version") or config.data_snapshot),
@@ -267,13 +264,28 @@ class AStockDataProvider:
     def _validate_required_files(self, snapshot_dir: Path) -> None:
         missing = [
             filename
-            for filename in [*self.REQUIRED_CSV_FILES.values(), "metrics.json"]
+            for filename in [*self.REQUIRED_CSV_FILES, "metrics.json"]
             if not (snapshot_dir / filename).exists()
         ]
         if missing:
             raise FileNotFoundError(
                 "a-stock-data snapshot missing required files: " + ", ".join(missing)
             )
+
+    def _validate_csv_headers(self, snapshot_dir: Path) -> None:
+        csv_specs = {s.filename: s for s in mvp1_csv_specs()}
+        all_errors: list[str] = []
+        for filename, spec in csv_specs.items():
+            path = snapshot_dir / filename
+            if not path.exists():
+                continue
+            with path.open("r", encoding=CSV_ENCODING, newline="") as f:
+                reader = csv.reader(f)
+                header = next(reader, [])
+            errors = validate_csv_header(spec.filename, header, spec.required_columns)
+            all_errors.extend(errors)
+        if all_errors:
+            raise ValueError("; ".join(all_errors))
 
 
 def build_data_provider(name: str) -> DataProvider:

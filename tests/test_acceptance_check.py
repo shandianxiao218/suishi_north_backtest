@@ -33,8 +33,8 @@ def test_validate_full_outputs_reports_missing_categories(tmp_path: Path) -> Non
     validate_full_outputs(tmp_path, report)
 
     assert not report.passed
-    assert any("指标/绩效输出" in error for error in report.errors)
-    assert any("参数敏感性输出" in error for error in report.errors)
+    assert any("metrics.json" in error for error in report.errors)
+    assert any("sensitivity.csv" in error for error in report.errors)
 
 
 def test_validate_csv_outputs_accepts_utf8_sig_csv_files(tmp_path: Path) -> None:
@@ -427,3 +427,77 @@ def test_validate_metadata_requires_new_fields(monkeypatch: object, tmp_path: Pa
     assert any("data_version" in error for error in report.errors)
     assert any("parameter_set" in error for error in report.errors)
     assert any("universe" in error for error in report.errors)
+
+
+# ---- output contract 集成测试 ----
+
+
+def test_acceptance_check_rejects_missing_contract_columns(tmp_path: Path) -> None:
+    """acceptance_check 应通过 validate_output_contract 检测缺少的 CSV 列。"""
+    # 写入缺少必需列的 equity_curve.csv
+    write_csv(tmp_path / "equity_curve.csv", ["date"], [])
+    write_csv(tmp_path / "trades.csv", ["trade_id"], [])
+    write_csv(tmp_path / "skipped_trades.csv", ["signal_date", "track", "symbol", "reason"], [])
+
+    # 写入合法的 run_metadata.json（smoke profile 只检查 smoke 文件）
+    metadata = {
+        "name": "test",
+        "start_date": "2024-01-01",
+        "end_date": "2024-01-05",
+        "initial_cash": 1000000,
+        "code_version": "0.1.0",
+        "created_at": "2024-01-05T00:00:00+00:00",
+        "data_source": "fixture",
+        "data_version": "test-v1",
+        "parameter_set": "ADR-0002 defaults",
+        "universe": "test",
+        "research_limitation": "MVP-1 是日线代理研究系统",
+        "outputs": [],
+    }
+    write_json(tmp_path / "run_metadata.json", metadata)
+
+    from scripts.acceptance_check import main as acceptance_main
+
+    # 用 smoke profile 直接调用 validate_output_contract
+    from suishi_north_backtest.output_contract import validate_output_contract
+
+    errors = validate_output_contract(tmp_path, profile="smoke")
+    csv_errors = [e for e in errors if "缺少必需列" in e]
+    assert csv_errors, "应通过 contract 检测到缺少的 CSV 列"
+
+
+def test_acceptance_check_rejects_missing_contract_json_fields(tmp_path: Path) -> None:
+    """acceptance_check 应通过 validate_output_contract 检测缺少的 JSON 字段。"""
+    # 写入合法的 smoke CSV
+    write_csv(tmp_path / "equity_curve.csv", ["date", "cash", "equity", "drawdown", "track"], [])
+    write_csv(tmp_path / "trades.csv", [
+        "trade_id", "track", "symbol", "entry_signal_date", "entry_date", "entry_price",
+        "entry_shares", "exit_trigger_date", "exit_date", "exit_price", "exit_reason",
+        "commission", "stamp_tax", "slippage_cost", "total_cost", "gross_pnl", "net_pnl",
+        "first_target_achieved", "audit_note",
+    ], [])
+    write_csv(tmp_path / "skipped_trades.csv", ["signal_date", "track", "symbol", "reason"], [])
+
+    # 写入缺少 created_at 的 run_metadata.json
+    metadata = {
+        "name": "test",
+        "start_date": "2024-01-01",
+        "end_date": "2024-01-05",
+        "initial_cash": 1000000,
+        "code_version": "0.1.0",
+        # 故意缺少 created_at
+        "data_source": "fixture",
+        "data_version": "test-v1",
+        "parameter_set": "ADR-0002 defaults",
+        "universe": "test",
+        "research_limitation": "MVP-1 是日线代理研究系统",
+        "outputs": [],
+    }
+    write_json(tmp_path / "run_metadata.json", metadata)
+
+    from suishi_north_backtest.output_contract import validate_output_contract
+
+    errors = validate_output_contract(tmp_path, profile="smoke")
+    json_errors = [e for e in errors if "run_metadata.json" in e and "缺少必需字段" in e]
+    assert json_errors, "应通过 contract 检测到缺少的 JSON 字段"
+    assert any("created_at" in e for e in json_errors)
