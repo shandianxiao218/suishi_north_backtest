@@ -45,6 +45,7 @@ def stock(
     limit_down: float | None = None,
     stock_name: str = "",
     is_delisting: bool = False,
+    market: str = "",
 ) -> StockDaily:
     return StockDaily(
         trade_date=trade_date,
@@ -61,6 +62,7 @@ def stock(
         is_suspended=is_suspended,
         stock_name=stock_name,
         is_delisting=is_delisting,
+        market=market,
     )
 
 
@@ -420,3 +422,59 @@ def test_low_liquidity_audit_has_reason() -> None:
     assert len(audit) >= 1
     liquidity_audits = [a for a in audit if "流动性" in a.reason or "成交额" in a.reason]
     assert len(liquidity_audits) >= 1
+
+
+def test_excludes_beijing_exchange_from_market_field() -> None:
+    """market 字段为 BJ/BSE/北交所/新三板 时排除，即使 symbol 前缀不在 8/4。"""
+    stocks = [
+        stock(symbol="000001", market="SZ", amount=1_000_000),
+        stock(symbol="600519", market="SH", amount=1_000_000),
+        stock(symbol="000002", market="BJ", amount=1_000_000),
+        stock(symbol="000003", market="BSE", amount=1_000_000),
+        stock(symbol="000004", market="", amount=1_000_000),   # 无 market 字段，用前缀
+        stock(symbol="830799", market="", amount=1_000_000),   # 无 market，前缀排除
+    ]
+    md = make_market_data(stocks)
+    universe = build_universe(md)
+
+    symbols = {e.symbol for e in universe}
+    assert "000001" in symbols
+    assert "600519" in symbols
+    assert "000002" not in symbols   # market=BJ 排除
+    assert "000003" not in symbols   # market=BSE 排除
+    assert "000004" in symbols       # 无 market，symbol 正常
+    assert "830799" not in symbols   # 前缀排除
+
+
+def test_excludes_long_suspended_stock() -> None:
+    """连续停牌超过阈值的股票被排除。"""
+    stocks = [
+        # 正常交易
+        stock(symbol="000001", trade_date="2024-01-02", amount=1_000_000),
+        # 连续停牌 5 天
+        stock(symbol="000002", trade_date="2024-01-02", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000002", trade_date="2024-01-03", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000002", trade_date="2024-01-04", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000002", trade_date="2024-01-05", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000002", trade_date="2024-01-08", is_suspended=True, open=None, close=None, amount=None),
+    ]
+    md = make_market_data(stocks)
+    universe = build_universe(md, long_suspension_days=5)
+
+    symbols = {e.symbol for e in universe}
+    assert "000001" in symbols
+    assert "000002" not in symbols
+
+
+def test_long_suspension_audit_has_reason() -> None:
+    """长期停牌排除有审计原因。"""
+    stocks = [
+        stock(symbol="000001", trade_date="2024-01-02", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000001", trade_date="2024-01-03", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000001", trade_date="2024-01-04", is_suspended=True, open=None, close=None, amount=None),
+    ]
+    md = make_market_data(stocks)
+    _, audit = build_universe_with_audit(md, long_suspension_days=3)
+
+    long_audit = [a for a in audit if "长期停牌" in a.reason]
+    assert len(long_audit) >= 1

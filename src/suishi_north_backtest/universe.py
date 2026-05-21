@@ -24,6 +24,7 @@ class TradabilityAudit:
 DEFAULT_NEW_STOCK_DAYS = 120
 APPROX_TRADING_DAYS_PER_YEAR = 250
 DEFAULT_MIN_AMOUNT = 0.0
+DEFAULT_LONG_SUSPENSION_DAYS = 0
 
 
 def build_universe(
@@ -32,8 +33,9 @@ def build_universe(
     new_stock_days: int = DEFAULT_NEW_STOCK_DAYS,
     listing_dates: dict[str, str] | None = None,
     min_amount: float = DEFAULT_MIN_AMOUNT,
+    long_suspension_days: int = DEFAULT_LONG_SUSPENSION_DAYS,
 ) -> list[UniverseEntry]:
-    entries, _ = _build_universe_internal(md, as_of, new_stock_days, listing_dates, min_amount)
+    entries, _ = _build_universe_internal(md, as_of, new_stock_days, listing_dates, min_amount, long_suspension_days)
     return entries
 
 
@@ -43,8 +45,9 @@ def build_universe_with_audit(
     new_stock_days: int = DEFAULT_NEW_STOCK_DAYS,
     listing_dates: dict[str, str] | None = None,
     min_amount: float = DEFAULT_MIN_AMOUNT,
+    long_suspension_days: int = DEFAULT_LONG_SUSPENSION_DAYS,
 ) -> tuple[list[UniverseEntry], list[TradabilityAudit]]:
-    return _build_universe_internal(md, as_of, new_stock_days, listing_dates, min_amount)
+    return _build_universe_internal(md, as_of, new_stock_days, listing_dates, min_amount, long_suspension_days)
 
 
 def _build_universe_internal(
@@ -53,6 +56,7 @@ def _build_universe_internal(
     new_stock_days: int,
     listing_dates: dict[str, str] | None,
     min_amount: float,
+    long_suspension_days: int,
 ) -> tuple[list[UniverseEntry], list[TradabilityAudit]]:
     industry_by_symbol = {m.symbol: m.industry_level2 for m in md.industry_map}
 
@@ -60,13 +64,22 @@ def _build_universe_internal(
         e.trade_date for e in md.trading_calendar if e.is_open
     )
 
+    long_suspended = _compute_long_suspended(md, long_suspension_days, as_of)
+
     universe: list[UniverseEntry] = []
     audit: list[TradabilityAudit] = []
 
     for s in md.stock_daily:
-        excluded, reason = _check_exclusion(
-            s, as_of, calendar_dates, new_stock_days, listing_dates, min_amount,
-        )
+        # 长期停牌优先于单日停牌检查
+        excluded = False
+        reason = ""
+        if long_suspension_days > 0 and s.symbol in long_suspended:
+            excluded = True
+            reason = f"长期停牌（连续 {long_suspended[s.symbol]} 个交易日）：{s.symbol}"
+        if not excluded:
+            excluded, reason = _check_exclusion(
+                s, as_of, calendar_dates, new_stock_days, listing_dates, min_amount,
+            )
         if excluded:
             audit.append(
                 TradabilityAudit(
@@ -108,7 +121,7 @@ def _check_exclusion(
     listing_dates: dict[str, str] | None,
     min_amount: float,
 ) -> tuple[bool, str]:
-    if _is_beijing_exchange(s.symbol):
+    if _is_beijing_exchange(s.symbol, s.market):
         return True, f"北交所股票：{s.symbol}"
 
     if s.is_st or _is_st_from_name(s.stock_name):
@@ -118,6 +131,7 @@ def _check_exclusion(
         return True, f"退市股票：{s.symbol}"
 
     if s.is_suspended:
+        # 单日停牌：如果有长期停牌检查，会被外层覆盖
         return True, f"停牌：{s.symbol}"
 
     if min_amount > 0 and s.amount is not None and s.amount < min_amount:
@@ -137,13 +151,13 @@ def _check_exclusion(
     return False, ""
 
 
-def _is_beijing_exchange(symbol: str) -> bool:
+def _is_beijing_exchange(symbol: str, market: str = "") -> bool:
     """判断是否为北交所或新三板股票。
 
-    北交所/新三板代码规则：
-    - 8xxxxx（北交所/新三板）
-    - 4xxxxx（新三板/老三板）
+    优先使用 market 字段判定，其次用代码前缀推断。
     """
+    if market:
+        return market.upper() in ("BJ", "BSE", "北交所", "新三板")
     return symbol.startswith("8") or symbol.startswith("4")
 
 
@@ -153,6 +167,44 @@ def _is_st_from_name(stock_name: str) -> bool:
 
 def _is_delisting_from_name(stock_name: str) -> bool:
     return "退" in stock_name
+
+
+def _compute_long_suspended(
+    md: MarketData,
+    long_suspension_days: int,
+    as_of: str | None,
+) -> dict[str, int]:
+    """计算截至 as_of 连续停牌天数超过阈值的股票。
+
+    Returns:
+        symbol -> 连续停牌天数 的映射（仅包含超过阈值的）。
+    """
+    if long_suspension_days <= 0:
+        return {}
+
+    # 按日期排序，按 symbol 分组
+    by_symbol: dict[str, list[StockDaily]] = {}
+    for s in md.stock_daily:
+        by_symbol.setdefault(s.symbol, []).append(s)
+
+    result: dict[str, int] = {}
+    for symbol, bars in by_symbol.items():
+        bars = sorted(bars, key=lambda b: b.trade_date)
+        if as_of:
+            bars = [b for b in bars if b.trade_date <= as_of]
+
+        # 从末尾往前数连续停牌天数
+        consecutive = 0
+        for b in reversed(bars):
+            if b.is_suspended:
+                consecutive += 1
+            else:
+                break
+
+        if consecutive >= long_suspension_days:
+            result[symbol] = consecutive
+
+    return result
 
 
 def _count_trading_days_between(

@@ -23,6 +23,7 @@ class StockDaily:
     is_suspended: bool
     stock_name: str = ""
     is_delisting: bool = False
+    market: str = ""
 
 
 @dataclass
@@ -140,6 +141,7 @@ def _load_stock_daily(path: Path) -> list[StockDaily]:
                 is_suspended=not has_open,
                 stock_name=row.get("stock_name", "").strip(),
                 is_delisting=_derive_is_delisting(row),
+                market=row.get("market", "").strip(),
             )
         )
     result.sort(key=lambda s: (s.trade_date, s.symbol))

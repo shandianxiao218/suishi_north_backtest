@@ -796,3 +796,103 @@ def test_mainline_filtered_records_skip_reason_for_non_strong_mainline_candidate
     assert has_mainline_skip, (
         f"mainline_filtered 跳过原因应包含'强主线'，实际：{skip_reasons}"
     )
+
+
+def test_runner_filters_low_liquidity_stock(tmp_path: Path) -> None:
+    """低流动性过滤在生产 runner 路径中生效。
+
+    构造一只低成交额股票，设置 min_daily_amount 参数，
+    断言该股票不会进入候选/交易链路。
+    """
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+
+    manifest = {
+        "data_version": "low-liquidity-v1",
+        "source": "low-liquidity-test",
+        "created_at": "2024-01-01T00:00:00+08:00",
+        "stock_daily_file": "stock_daily.csv",
+        "index_daily_file": "index_daily.csv",
+        "industry_map_file": "industry_map.csv",
+        "industry_daily_amount_file": "industry_daily_amount.csv",
+        "trading_calendar_file": "trading_calendar.csv",
+    }
+    (snapshot_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # 低成交额股票（amount=500）
+    base_prices = [
+        ("2024-01-02", "9.5",  "9.8",  "9.0",  "9.5",  "50000",  "500",    "10.45", "8.55"),
+        ("2024-01-03", "9.2",  "9.5",  "8.8",  "9.0",  "45000",  "450",    "9.90",  "8.10"),
+        ("2024-01-04", "8.8",  "9.0",  "7.9",  "8.0",  "60000",  "480",    "8.80",  "7.20"),
+        ("2024-01-05", "8.3",  "9.0",  "8.1",  "8.8",  "55000",  "484",    "9.68",  "7.92"),
+        ("2024-01-08", "9.0",  "9.8",  "8.9",  "9.6",  "70000",  "672",    "10.56", "8.64"),
+        ("2024-01-09", "9.8",  "10.5", "9.7",  "10.3", "80000",  "824",    "11.33", "9.27"),
+        ("2024-01-10", "10.5", "11.0", "10.2", "10.8", "85000",  "918",    "11.88", "9.72"),
+        ("2024-01-11", "10.9", "11.5", "10.8", "11.3", "90000",  "1017",   "12.43", "10.17"),
+        ("2024-01-12", "11.5", "12.2", "11.3", "11.8", "95000",  "1121",   "12.98", "10.62"),
+        ("2024-01-15", "12.0", "12.8", "11.8", "12.0",  "100000", "1200",   "13.20", "10.80"),
+        ("2024-01-16", "11.8", "12.0", "11.2", "11.5", "80000",  "920",    "12.65", "10.35"),
+        ("2024-01-17", "11.3", "11.5", "10.8", "11.0", "75000",  "825",    "12.10", "9.90"),
+        ("2024-01-18", "10.8", "11.2", "10.5", "10.8", "65000",  "702",    "11.88", "9.72"),
+        ("2024-01-19", "10.5", "10.8", "10.2", "10.5", "60000",  "630",    "11.55", "9.45"),
+        ("2024-01-22", "10.3", "10.6", "10.0", "10.2", "55000",  "561",    "11.22", "9.18"),
+        ("2024-01-23", "10.2", "10.8", "10.1", "10.5", "60000",  "630",    "11.55", "9.45"),
+        ("2024-01-24", "10.5", "10.9", "10.4", "10.7", "65000",  "695.5",  "11.77", "9.63"),
+        ("2024-01-25", "10.7", "11.0", "10.6", "10.9", "68000",  "741.2",  "11.99", "9.81"),
+    ]
+
+    stock_rows = [[r[0], "000001", *r[1:]] for r in base_prices]
+    _write_csv(snapshot_dir / "stock_daily.csv", STOCK_DAILY_FIELDS, stock_rows)
+    _write_csv(
+        snapshot_dir / "index_daily.csv",
+        INDEX_DAILY_FIELDS,
+        [["2024-01-02", "000300", "3500", "3520", "3490", "3510", "10000", "35000000"]],
+    )
+    _write_csv(
+        snapshot_dir / "industry_map.csv",
+        ["symbol", "industry_level2"],
+        [["000001", "电子"]],
+    )
+    industry_rows = []
+    all_dates = [r[0] for r in base_prices]
+    for d in all_dates:
+        industry_rows.append([d, "电子", "5000000000"])
+        industry_rows.append([d, "银行", "1000000000"])
+        industry_rows.append([d, "地产", "800000000"])
+    _write_csv(
+        snapshot_dir / "industry_daily_amount.csv",
+        ["trade_date", "industry_level2", "amount"],
+        industry_rows,
+    )
+    _write_csv(
+        snapshot_dir / "trading_calendar.csv",
+        ["trade_date", "is_open"],
+        [[d, "1"] for d in all_dates],
+    )
+
+    config = BacktestConfig(
+        name="low-liquidity-test",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        initial_cash=1_000_000,
+        output_dir=tmp_path / "output",
+        data_source="a-stock-data",
+        data_snapshot=snapshot_dir.name,
+        data_dir=snapshot_dir.parent,
+    )
+
+    from suishi_north_backtest.parameters import StrategyParameters, default_mvp1_parameters
+    import dataclasses
+
+    params = dataclasses.replace(default_mvp1_parameters(), min_daily_amount=1_000_000.0)
+    data_set = run_mvp1_from_raw_snapshot(snapshot_dir, config, parameters=params)
+
+    # 该股票因低流动性被排除，不应有候选或交易
+    assert len(data_set.candidates) == 0, (
+        f"低流动性股票不应产生候选，但得到 {len(data_set.candidates)} 个"
+    )
+    assert len(data_set.trades) == 0, (
+        f"低流动性股票不应产生交易，但得到 {len(data_set.trades)} 笔"
+    )

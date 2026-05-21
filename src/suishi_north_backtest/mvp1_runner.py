@@ -83,7 +83,7 @@ def run_mvp1_from_raw_snapshot(
     market_data = load_market_data(raw_snapshot_dir, manifest)
 
     as_of = config.end_date
-    universe_entries = _filter_as_of_universe(market_data, as_of)
+    universe_entries = _filter_as_of_universe(market_data, as_of, parameters)
     tradable_symbols_by_date = {
         (entry.trade_date, entry.symbol) for entry in universe_entries
     }
@@ -212,10 +212,21 @@ def run_mvp1_from_raw_snapshot(
     )
 
 
-def _filter_as_of_universe(market_data: MarketData, as_of: str) -> list:
+def _filter_as_of_universe(
+    market_data: MarketData,
+    as_of: str,
+    parameters: StrategyParameters | None = None,
+) -> list:
     from suishi_north_backtest.universe import build_universe
 
-    return build_universe(market_data, as_of=as_of)
+    min_amount = parameters.min_daily_amount if parameters else 0.0
+    long_suspension_days = parameters.long_suspension_days if parameters else 0
+    return build_universe(
+        market_data,
+        as_of=as_of,
+        min_amount=min_amount,
+        long_suspension_days=long_suspension_days,
+    )
 
 
 def _filter_candidates(

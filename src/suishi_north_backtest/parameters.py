@@ -46,6 +46,10 @@ class StrategyParameters:
     trend_exit_pct: float
     max_holding_days: int
 
+    # 股票池过滤
+    min_daily_amount: float
+    long_suspension_days: int
+
     # -- signals.py 兼容属性：它用百分比值（20.0 = 20%） --
 
     @property
@@ -94,4 +98,6 @@ def default_mvp1_parameters() -> StrategyParameters:
         time_stop_days=3,
         trend_exit_pct=0.08,
         max_holding_days=30,
+        min_daily_amount=0.0,
+        long_suspension_days=0,
     )
