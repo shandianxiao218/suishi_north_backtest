@@ -45,6 +45,20 @@ def run_mvp1_backtest(config: BacktestConfig) -> BacktestResult:
     provider = build_data_provider(config.data_source)
     data_set = provider.load(config)
 
+    return write_mvp1_dataset_outputs(config, data_set)
+
+
+def write_mvp1_dataset_outputs(
+    config: BacktestConfig,
+    data_set: Mvp1DataSet,
+) -> BacktestResult:
+    """将 Mvp1DataSet 写入标准 MVP-1 输出目录。
+
+    供 mvp1_runner 等外部模块调用：先构造 Mvp1DataSet，再调用本函数写文件。
+    """
+    output_dir = config.normalized_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     _write_equity_curve(output_dir / "equity_curve.csv", data_set)
     _write_trades(output_dir / "trades.csv", data_set)
     _write_skipped_trades(output_dir / "skipped_trades.csv", data_set)
