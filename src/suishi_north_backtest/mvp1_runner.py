@@ -15,6 +15,7 @@ from suishi_north_backtest.parameters import StrategyParameters, default_mvp1_pa
 from suishi_north_backtest.portfolio import PortfolioAction, select_candidates
 from suishi_north_backtest.raw_data import validate_raw_snapshot
 from suishi_north_backtest.signals import CandidateSignal, find_candidates
+from suishi_north_backtest.tracks import Track, build_mainline_map
 
 
 @dataclass(frozen=True)
@@ -107,38 +108,78 @@ def run_mvp1_from_raw_snapshot(
         mainline_rank_by_key,
     )
 
-    trades, holdings, skipped_rows, equity_points = _simulate_portfolio(
-        candidates=candidates,
-        market_data=market_data,
-        config=config,
-        parameters=parameters,
-    )
+    # 构建主线映射，用于双轨过滤
+    mainline_entries = compute_mainlines(market_data.industry_daily_amount, as_of=as_of, parameters=parameters)
+    mainline_map = build_mainline_map(mainline_entries)
 
-    ending_equity = equity_points[-1]["equity"] if equity_points else config.initial_cash
-    total_return = _safe_pct_change(config.initial_cash, float(ending_equity))
-    max_drawdown = _max_drawdown([float(point["equity"]) for point in equity_points])
-    win_rate = _win_rate(trades)
-    profit_factor = _profit_factor(trades)
+    # 双轨独立模拟
+    all_trades: list[ClosedTrade] = []
+    all_holdings: list[dict[str, object]] = []
+    all_skipped: list[dict[str, object]] = []
+    all_equity: list[dict[str, object]] = []
+
+    for track_name in ["pure_structure", "mainline_filtered"]:
+        trades, holdings, skipped_rows, equity_points = _simulate_portfolio_for_track(
+            candidates=candidates,
+            market_data=market_data,
+            config=config,
+            parameters=parameters,
+            track_name=track_name,
+            mainline_map=mainline_map,
+            industry_by_symbol=industry_by_symbol,
+        )
+        all_trades.extend(trades)
+        all_holdings.extend(holdings)
+        all_skipped.extend(skipped_rows)
+        all_equity.extend(equity_points)
+
+    # 合并两条轨道的净值曲线（按日期排序）
+    all_equity.sort(key=lambda p: str(p.get("date", "")))
+
+    # 计算合并指标
+    ending_equity = max(
+        (float(p["equity"]) for p in all_equity),
+        default=float(config.initial_cash),
+    )
+    total_return = _safe_pct_change(config.initial_cash, ending_equity)
+    max_drawdown = _max_drawdown([float(p["equity"]) for p in all_equity])
+    win_rate = _win_rate(all_trades)
+    profit_factor = _profit_factor(all_trades)
+
+    # 各轨道独立指标
+    ps_trades = [t for t in all_trades if t.trade_id.startswith("PURE")]
+    mf_trades = [t for t in all_trades if t.trade_id.startswith("MAIN")]
+    ps_equity = [p for p in all_equity if p.get("track") == "pure_structure"]
+    mf_equity = [p for p in all_equity if p.get("track") == "mainline_filtered"]
+
+    ps_return = _safe_pct_change(
+        float(config.initial_cash),
+        float(ps_equity[-1]["equity"]) if ps_equity else float(config.initial_cash),
+    )
+    mf_return = _safe_pct_change(
+        float(config.initial_cash),
+        float(mf_equity[-1]["equity"]) if mf_equity else float(config.initial_cash),
+    )
 
     metrics = {
         "name": config.name,
         "initial_cash": config.initial_cash,
-        "ending_equity": round(float(ending_equity), 2),
+        "ending_equity": round(ending_equity, 2),
         "total_return": round(total_return, 6),
         "max_drawdown": round(max_drawdown, 6),
         "profit_factor": round(profit_factor, 6),
         "win_rate": round(win_rate, 6),
-        "trade_count": len(trades),
+        "trade_count": len(all_trades),
         "candidate_count": len(candidates),
-        "skipped_count": len(skipped_rows),
+        "skipped_count": len(all_skipped),
         "tracks": {
             "pure_structure": {
-                "trade_count": len(trades),
-                "total_return": round(total_return, 6),
+                "trade_count": len(ps_trades),
+                "total_return": round(ps_return, 6),
             },
             "mainline_filtered": {
-                "trade_count": len(trades),
-                "total_return": round(total_return, 6),
+                "trade_count": len(mf_trades),
+                "total_return": round(mf_return, 6),
             },
         },
         "benchmarks": REQUIRED_BENCHMARKS,
@@ -147,7 +188,7 @@ def run_mvp1_from_raw_snapshot(
             "sample_out": ["2023-01-01", as_of],
             "recent": ["2024-01-01", as_of],
         },
-        "audit_note": "raw snapshot generated MVP-1 dataset",
+        "audit_note": "raw snapshot generated MVP-1 dataset with real dual-track",
         "parameters": parameters.to_metadata(),
     }
 
@@ -155,17 +196,17 @@ def run_mvp1_from_raw_snapshot(
         data_version=manifest.data_version,
         parameter_set=parameters.name,
         universe=f"raw-a-stock-data-universe-{len({entry.symbol for entry in universe_entries})}",
-        equity_curve=equity_points,
-        trades=_trade_rows(trades),
-        skipped_trades=skipped_rows,
+        equity_curve=all_equity,
+        trades=_trade_rows(all_trades),
+        skipped_trades=all_skipped,
         candidates=candidate_rows,
-        holdings=holdings,
+        holdings=all_holdings,
         benchmark_comparison=_benchmark_rows(
             market_data=market_data,
             strategy_return=total_return,
             max_drawdown=max_drawdown,
         ),
-        track_comparison=_track_rows(total_return, max_drawdown, len(trades)),
+        track_comparison=_real_track_rows(ps_trades, ps_return, mf_trades, mf_return),
         sensitivity=_sensitivity_rows(total_return),
         metrics=metrics,
     )
@@ -237,11 +278,14 @@ def _candidate_score(
     return candidate.ab_gain_pct + mainline_bonus + rank_bonus - distance_penalty
 
 
-def _simulate_portfolio(
+def _simulate_portfolio_for_track(
     candidates: list[CandidateSignal],
     market_data: MarketData,
     config: BacktestConfig,
     parameters: StrategyParameters,
+    track_name: str,
+    mainline_map: dict[str, dict[str, tuple[MainlineStatus, int, float]]] | None = None,
+    industry_by_symbol: dict[str, str] | None = None,
 ) -> tuple[
     list[ClosedTrade],
     list[dict[str, object]],
@@ -249,6 +293,18 @@ def _simulate_portfolio(
     list[dict[str, object]],
 ]:
     bars_by_symbol = _bars_by_symbol(market_data.stock_daily)
+
+    # 按轨道类型过滤候选：pure_structure 接受所有，mainline_filtered 只接受强主线
+    if track_name == "mainline_filtered" and mainline_map and industry_by_symbol:
+        filtered_candidates = []
+        for c in candidates:
+            industry = industry_by_symbol.get(c.symbol, "")
+            date_data = mainline_map.get(c.signal_date, {})
+            status_info = date_data.get(industry)
+            if status_info and status_info[0] == MainlineStatus.STRONG:
+                filtered_candidates.append(c)
+    else:
+        filtered_candidates = list(candidates)
     trades: list[ClosedTrade] = []
     holdings: list[dict[str, object]] = []
     skipped_rows: list[dict[str, object]] = []
@@ -258,7 +314,7 @@ def _simulate_portfolio(
             "cash": round(float(config.initial_cash), 2),
             "equity": round(float(config.initial_cash), 2),
             "drawdown": "0.0000",
-            "track": "portfolio",
+            "track": track_name,
         }
     ]
 
@@ -267,7 +323,7 @@ def _simulate_portfolio(
     opened_today_by_date: dict[str, int] = {}
     opened_week_by_key: dict[str, int] = {}
 
-    for candidate in sorted(candidates, key=lambda c: (c.signal_date, -c.ab_gain_pct)):
+    for candidate in sorted(filtered_candidates, key=lambda c: (c.signal_date, -c.ab_gain_pct)):
         week_key = candidate.signal_date[:7]
         actions = select_candidates(
             candidates=[candidate],
@@ -278,12 +334,12 @@ def _simulate_portfolio(
         )
         open_action = _first_open_action(actions)
         if open_action is None:
-            skipped_rows.extend(_skip_rows_from_actions(actions))
+            skipped_rows.extend(_skip_rows_from_actions(actions, track_name))
             continue
 
         entry_bar = _next_bar_after(bars_by_symbol.get(candidate.symbol, []), candidate.signal_date)
         if entry_bar is None:
-            skipped_rows.append(_skip_row(candidate, "缺少 T+1 买入行情，无法成交"))
+            skipped_rows.append(_skip_row(candidate, "缺少 T+1 买入行情，无法成交", track_name))
             continue
 
         buy = execute_buy(
@@ -298,7 +354,7 @@ def _simulate_portfolio(
             parameters=parameters,
         )
         if not buy.executed:
-            skipped_rows.append(_skip_row(candidate, buy.skip_reason))
+            skipped_rows.append(_skip_row(candidate, buy.skip_reason, track_name))
             continue
 
         cash = buy.cash_remaining
@@ -322,6 +378,7 @@ def _simulate_portfolio(
             position=position,
             bars=bars_by_symbol.get(candidate.symbol, []),
             parameters=parameters,
+            track_name=track_name,
         )
         if trade is not None:
             cash = position.cash_after_entry + trade.sell_cash_proceeds
@@ -333,14 +390,14 @@ def _simulate_portfolio(
                     "cash": round(cash, 2),
                     "equity": round(cash, 2),
                     "drawdown": f"{_max_drawdown([float(p['equity']) for p in equity_points] + [cash]):.6f}",
-                    "track": "portfolio",
+                    "track": track_name,
                 }
             )
         else:
             holdings.append(
                 {
                     "date": config.end_date,
-                    "track": "portfolio",
+                    "track": track_name,
                     "symbol": position.symbol,
                     "shares": str(position.shares),
                     "cost_basis": f"{position.shares * position.entry_price:.2f}",
@@ -359,15 +416,15 @@ def _simulate_portfolio(
                 "cash": round(cash, 2),
                 "equity": round(cash, 2),
                 "drawdown": "0.0000",
-                "track": "portfolio",
+                "track": track_name,
             }
         )
 
-    if not candidates:
+    if not filtered_candidates:
         skipped_rows.append(
             {
                 "signal_date": config.end_date,
-                "track": "portfolio",
+                "track": track_name,
                 "symbol": "ALL",
                 "reason": "raw snapshot 未产生候选信号",
             }
@@ -377,7 +434,7 @@ def _simulate_portfolio(
         holdings.append(
             {
                 "date": config.end_date,
-                "track": "portfolio",
+                "track": track_name,
                 "symbol": "CASH",
                 "shares": "0",
                 "cost_basis": "0.00",
@@ -408,11 +465,11 @@ def _first_open_action(actions: list[PortfolioAction]) -> PortfolioAction | None
     return None
 
 
-def _skip_rows_from_actions(actions: list[PortfolioAction]) -> list[dict[str, object]]:
+def _skip_rows_from_actions(actions: list[PortfolioAction], track_name: str) -> list[dict[str, object]]:
     return [
         {
             "signal_date": action.signal_date,
-            "track": "portfolio",
+            "track": track_name,
             "symbol": action.symbol,
             "reason": action.reason,
         }
@@ -421,10 +478,10 @@ def _skip_rows_from_actions(actions: list[PortfolioAction]) -> list[dict[str, ob
     ]
 
 
-def _skip_row(candidate: CandidateSignal, reason: str) -> dict[str, object]:
+def _skip_row(candidate: CandidateSignal, reason: str, track_name: str) -> dict[str, object]:
     return {
         "signal_date": candidate.signal_date,
-        "track": "portfolio",
+        "track": track_name,
         "symbol": candidate.symbol,
         "reason": reason,
     }
@@ -441,6 +498,7 @@ def _close_position_if_possible(
     position: OpenPosition,
     bars: list[StockDaily],
     parameters: StrategyParameters,
+    track_name: str = "portfolio",
 ) -> ClosedTrade | None:
     after_entry = [bar for bar in bars if bar.trade_date > position.entry_date]
     highest_close = position.highest_close_since_entry
@@ -479,8 +537,9 @@ def _close_position_if_possible(
         total_cost = position.commission + sell.commission + sell.stamp_tax
         slippage_cost = position.slippage + sell.slippage
         net_pnl = gross_pnl - total_cost
+        prefix = "PURE" if track_name == "pure_structure" else "MAIN" if track_name == "mainline_filtered" else "RAW"
         return ClosedTrade(
-            trade_id=f"RAW-{position.symbol}-{position.entry_date}-{sell_bar.trade_date}",
+            trade_id=f"{prefix}-{position.symbol}-{position.entry_date}-{sell_bar.trade_date}",
             symbol=position.symbol,
             entry_signal_date=position.entry_signal_date,
             entry_date=position.entry_date,
@@ -505,7 +564,7 @@ def _trade_rows(trades: list[ClosedTrade]) -> list[dict[str, object]]:
     return [
         {
             "trade_id": trade.trade_id,
-            "track": "portfolio",
+            "track": _trade_id_to_track(trade.trade_id),
             "symbol": trade.symbol,
             "entry_signal_date": trade.entry_signal_date,
             "entry_date": trade.entry_date,
@@ -526,6 +585,14 @@ def _trade_rows(trades: list[ClosedTrade]) -> list[dict[str, object]]:
         }
         for trade in trades
     ]
+
+
+def _trade_id_to_track(trade_id: str) -> str:
+    if trade_id.startswith("PURE"):
+        return "pure_structure"
+    if trade_id.startswith("MAIN"):
+        return "mainline_filtered"
+    return "portfolio"
 
 
 def _benchmark_rows(
@@ -567,21 +634,39 @@ def _benchmark_returns(market_data: MarketData) -> dict[str, float]:
     return result
 
 
-def _track_rows(total_return: float, max_drawdown: float, trade_count: int) -> list[dict[str, object]]:
+def _real_track_rows(
+    ps_trades: list[ClosedTrade],
+    ps_return: float,
+    mf_trades: list[ClosedTrade],
+    mf_return: float,
+) -> list[dict[str, object]]:
+    """构建真实双轨比较行，不是镜像数据。"""
+    ps_win = sum(1 for t in ps_trades if t.net_pnl > 0)
+    mf_win = sum(1 for t in mf_trades if t.net_pnl > 0)
+    ps_wr = ps_win / len(ps_trades) if ps_trades else 0.0
+    mf_wr = mf_win / len(mf_trades) if mf_trades else 0.0
+
     return [
         {
             "metric": "total_return",
-            "pure_structure_track": f"{total_return * 100:.2f}",
-            "mainline_filtered_track": f"{total_return * 100:.2f}",
-            "delta": "0.00",
-            "audit_note": "raw snapshot single-track runner mirrored into both tracks",
+            "pure_structure_track": f"{ps_return * 100:.2f}",
+            "mainline_filtered_track": f"{mf_return * 100:.2f}",
+            "delta": f"{(ps_return - mf_return) * 100:.2f}",
+            "audit_note": "real dual-track total return comparison",
         },
         {
-            "metric": "max_drawdown",
-            "pure_structure_track": f"{max_drawdown * 100:.2f}",
-            "mainline_filtered_track": f"{max_drawdown * 100:.2f}",
-            "delta": "0.00",
-            "audit_note": f"raw snapshot trade count {trade_count}",
+            "metric": "trade_count",
+            "pure_structure_track": str(len(ps_trades)),
+            "mainline_filtered_track": str(len(mf_trades)),
+            "delta": str(len(ps_trades) - len(mf_trades)),
+            "audit_note": "real dual-track trade count comparison",
+        },
+        {
+            "metric": "win_rate",
+            "pure_structure_track": f"{ps_wr * 100:.2f}",
+            "mainline_filtered_track": f"{mf_wr * 100:.2f}",
+            "delta": f"{(ps_wr - mf_wr) * 100:.2f}",
+            "audit_note": "real dual-track win rate comparison",
         },
     ]
 
