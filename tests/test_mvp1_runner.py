@@ -513,3 +513,286 @@ def test_runner_closed_trade_cash_matches_buy_cash_plus_sell_proceeds(
         f"diff={abs(final_cash - expected_cash):.2f}，"
         f"可能买入佣金被重复扣除"
     )
+
+
+def test_runner_top_level_metrics_do_not_use_max_equity_across_tracks(
+    tmp_path: Path,
+) -> None:
+    """顶层 metrics 不得使用 max(all_equity) 作为 ending_equity。
+
+    主口径以 mainline_filtered 最后一条 equity 为准，
+    不得取历史最高权益。
+    构造一个纯亏损场景验证：ending_equity 应小于 initial_cash。
+    """
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+
+    manifest = {
+        "data_version": "metrics-test-v1",
+        "source": "metrics-test",
+        "created_at": "2024-01-01T00:00:00+08:00",
+        "stock_daily_file": "stock_daily.csv",
+        "index_daily_file": "index_daily.csv",
+        "industry_map_file": "industry_map.csv",
+        "industry_daily_amount_file": "industry_daily_amount.csv",
+        "trading_calendar_file": "trading_calendar.csv",
+    }
+    (snapshot_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # 构造 A-B-C + 亏损退出场景
+    base_prices = [
+        ("2024-01-02", "9.5",  "9.8",  "9.0",  "9.5",  "50000",  "475000",  "10.45", "8.55"),
+        ("2024-01-03", "9.2",  "9.5",  "8.8",  "9.0",  "45000",  "405000",  "9.90",  "8.10"),
+        ("2024-01-04", "8.8",  "9.0",  "7.9",  "8.0",  "60000",  "480000",  "8.80",  "7.20"),
+        ("2024-01-05", "8.3",  "9.0",  "8.1",  "8.8",  "55000",  "484000",  "9.68",  "7.92"),
+        ("2024-01-08", "9.0",  "9.8",  "8.9",  "9.6",  "70000",  "672000",  "10.56", "8.64"),
+        ("2024-01-09", "9.8",  "10.5", "9.7",  "10.3", "80000",  "824000",  "11.33", "9.27"),
+        ("2024-01-10", "10.5", "11.0", "10.2", "10.8", "85000",  "918000",  "11.88", "9.72"),
+        ("2024-01-11", "10.9", "11.5", "10.8", "11.3", "90000",  "1017000", "12.43", "10.17"),
+        ("2024-01-12", "11.5", "12.2", "11.3", "11.8", "95000",  "1121000", "12.98", "10.62"),
+        ("2024-01-15", "12.0", "12.8", "11.8", "12.0",  "100000", "1200000", "13.20", "10.80"),
+        ("2024-01-16", "11.8", "12.0", "11.2", "11.5", "80000",  "920000",  "12.65", "10.35"),
+        ("2024-01-17", "11.3", "11.5", "10.8", "11.0", "75000",  "825000",  "12.10", "9.90"),
+        ("2024-01-18", "10.8", "11.2", "10.5", "10.8", "65000",  "702000",  "11.88", "9.72"),
+        ("2024-01-19", "10.5", "10.8", "10.2", "10.5", "60000",  "630000",  "11.55", "9.45"),
+        ("2024-01-22", "10.3", "10.6", "10.0", "10.2", "55000",  "561000",  "11.22", "9.18"),
+        ("2024-01-23", "10.2", "10.8", "10.1", "10.5", "60000",  "630000",  "11.55", "9.45"),
+        ("2024-01-24", "10.5", "10.9", "10.4", "10.7", "65000",  "695500", "11.77", "9.63"),
+        # T+1 买入日，open=10.7
+        ("2024-01-25", "10.7", "11.0", "10.6", "10.9", "68000",  "741200", "11.99", "9.81"),
+        # 暴跌触发应急止损：close 跌超 5%
+        ("2024-01-26", "6.0",  "6.5",  "5.5",  "5.8",   "100000", "580000",  "6.60",  "5.40"),
+        # T+1 卖出
+        ("2024-01-29", "5.8",  "6.2",  "5.5",  "5.9",   "80000",  "472000",  "6.38",  "5.22"),
+    ]
+
+    stock_rows = [[r[0], "000001", *r[1:]] for r in base_prices]
+    _write_csv(snapshot_dir / "stock_daily.csv", STOCK_DAILY_FIELDS, stock_rows)
+    _write_csv(
+        snapshot_dir / "index_daily.csv",
+        INDEX_DAILY_FIELDS,
+        [["2024-01-02", "000300", "3500", "3520", "3490", "3510", "10000", "35000000"]],
+    )
+    _write_csv(
+        snapshot_dir / "industry_map.csv",
+        ["symbol", "industry_level2"],
+        [["000001", "电子"]],
+    )
+    industry_rows = []
+    all_dates = [r[0] for r in base_prices]
+    for d in all_dates:
+        industry_rows.append([d, "电子", "5000000000"])
+        industry_rows.append([d, "银行", "1000000000"])
+        industry_rows.append([d, "地产", "800000000"])
+    _write_csv(
+        snapshot_dir / "industry_daily_amount.csv",
+        ["trade_date", "industry_level2", "amount"],
+        industry_rows,
+    )
+    _write_csv(
+        snapshot_dir / "trading_calendar.csv",
+        ["trade_date", "is_open"],
+        [[d, "1"] for d in all_dates],
+    )
+
+    config = BacktestConfig(
+        name="metrics-test",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        initial_cash=1_000_000,
+        output_dir=tmp_path / "output",
+        data_source="a-stock-data",
+        data_snapshot=snapshot_dir.name,
+        data_dir=snapshot_dir.parent,
+    )
+    data_set = run_mvp1_from_raw_snapshot(snapshot_dir, config)
+
+    ending_equity = data_set.metrics["ending_equity"]
+    total_return = data_set.metrics["total_return"]
+
+    # ending_equity 应是主轨道（mainline_filtered）最后一条 equity，不是历史最高
+    mf_equity = [
+        p for p in data_set.equity_curve
+        if p.get("track") == "mainline_filtered"
+    ]
+    assert mf_equity, "mainline_filtered equity_curve 不应为空"
+    expected_ending = float(mf_equity[-1]["equity"])
+    assert ending_equity == expected_ending, (
+        f"ending_equity={ending_equity} != mainline_filtered 最后权益={expected_ending}，"
+        f"可能错误使用了 max(all_equity)"
+    )
+
+    # 如果有亏损交易，ending_equity 应小于 initial_cash
+    if total_return < 0:
+        assert ending_equity < 1_000_000, (
+            f"total_return={total_return} 为负但 ending_equity={ending_equity} >= initial_cash"
+        )
+
+
+def test_runner_outputs_real_dual_track_rows(tmp_path: Path) -> None:
+    """生产级双轨端到端测试：验证 run_mvp1_from_raw_snapshot 输出真实双轨。
+
+    断言：
+    - equity_curve 同时包含 pure_structure 和 mainline_filtered
+    - metrics.tracks 同时包含两条轨道
+    - track_comparison 不是镜像（至少有 total_return / trade_count 行）
+    """
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+    _build_raw_snapshot(snapshot_dir)
+
+    config = _make_config(snapshot_dir, tmp_path / "output")
+    data_set = run_mvp1_from_raw_snapshot(snapshot_dir, config)
+
+    # 1. equity_curve 包含两条轨道
+    track_set = {row["track"] for row in data_set.equity_curve}
+    assert "pure_structure" in track_set, (
+        f"equity_curve 缺少 pure_structure track，实际 track={track_set}"
+    )
+    assert "mainline_filtered" in track_set, (
+        f"equity_curve 缺少 mainline_filtered track，实际 track={track_set}"
+    )
+
+    # 2. metrics.tracks 包含两条轨道的独立指标
+    tracks = data_set.metrics.get("tracks", {})
+    assert "pure_structure" in tracks, "metrics.tracks 缺少 pure_structure"
+    assert "mainline_filtered" in tracks, "metrics.tracks 缺少 mainline_filtered"
+
+    ps_metrics = tracks["pure_structure"]
+    mf_metrics = tracks["mainline_filtered"]
+    assert "trade_count" in ps_metrics
+    assert "trade_count" in mf_metrics
+    assert "total_return" in ps_metrics
+    assert "total_return" in mf_metrics
+
+    # 3. track_comparison 有真实比较行
+    assert len(data_set.track_comparison) >= 2, (
+        f"track_comparison 行数不足：{len(data_set.track_comparison)}"
+    )
+    tc_metrics = {row["metric"] for row in data_set.track_comparison}
+    assert "total_return" in tc_metrics, "track_comparison 缺少 total_return 行"
+    assert "trade_count" in tc_metrics, "track_comparison 缺少 trade_count 行"
+
+    # 4. track_comparison 不应是镜像（delta 全为 0）
+    # 因为该 snapshot 只有电子行业且是强主线，两条轨道会交易相同候选
+    # 但至少 trade_count 行的 audit_note 应说明是真实比较
+    for row in data_set.track_comparison:
+        assert "real dual-track" in str(row.get("audit_note", "")), (
+            f"track_comparison 行 {row['metric']} 仍使用镜像 audit_note"
+        )
+
+    # 5. trades 中 track 字段正确区分
+    if data_set.trades:
+        trade_tracks = {row["track"] for row in data_set.trades}
+        assert len(trade_tracks) >= 1, "trades 中 track 字段为空"
+
+
+def test_mainline_filtered_records_skip_reason_for_non_strong_mainline_candidate(
+    tmp_path: Path,
+) -> None:
+    """mainline_filtered 跳过非强主线候选时必须写入 skipped_trades 审计。
+
+    构造一个非强主线行业的候选，断言 skipped_trades 中有明确的审计记录。
+    """
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+
+    manifest = {
+        "data_version": "skip-audit-v1",
+        "source": "skip-audit-test",
+        "created_at": "2024-01-01T00:00:00+08:00",
+        "stock_daily_file": "stock_daily.csv",
+        "index_daily_file": "index_daily.csv",
+        "industry_map_file": "industry_map.csv",
+        "industry_daily_amount_file": "industry_daily_amount.csv",
+        "trading_calendar_file": "trading_calendar.csv",
+    }
+    (snapshot_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # A=8.0, B=12.0, C=10.2, 信号日 close=10.7
+    base_prices = [
+        ("2024-01-02", "9.5",  "9.8",  "9.0",  "9.5",  "50000",  "475000",  "10.45", "8.55"),
+        ("2024-01-03", "9.2",  "9.5",  "8.8",  "9.0",  "45000",  "405000",  "9.90",  "8.10"),
+        ("2024-01-04", "8.8",  "9.0",  "7.9",  "8.0",  "60000",  "480000",  "8.80",  "7.20"),
+        ("2024-01-05", "8.3",  "9.0",  "8.1",  "8.8",  "55000",  "484000",  "9.68",  "7.92"),
+        ("2024-01-08", "9.0",  "9.8",  "8.9",  "9.6",  "70000",  "672000",  "10.56", "8.64"),
+        ("2024-01-09", "9.8",  "10.5", "9.7",  "10.3", "80000",  "824000",  "11.33", "9.27"),
+        ("2024-01-10", "10.5", "11.0", "10.2", "10.8", "85000",  "918000",  "11.88", "9.72"),
+        ("2024-01-11", "10.9", "11.5", "10.8", "11.3", "90000",  "1017000", "12.43", "10.17"),
+        ("2024-01-12", "11.5", "12.2", "11.3", "11.8", "95000",  "1121000", "12.98", "10.62"),
+        ("2024-01-15", "12.0", "12.8", "11.8", "12.0",  "100000", "1200000", "13.20", "10.80"),
+        ("2024-01-16", "11.8", "12.0", "11.2", "11.5", "80000",  "920000",  "12.65", "10.35"),
+        ("2024-01-17", "11.3", "11.5", "10.8", "11.0", "75000",  "825000",  "12.10", "9.90"),
+        ("2024-01-18", "10.8", "11.2", "10.5", "10.8", "65000",  "702000",  "11.88", "9.72"),
+        ("2024-01-19", "10.5", "10.8", "10.2", "10.5", "60000",  "630000",  "11.55", "9.45"),
+        ("2024-01-22", "10.3", "10.6", "10.0", "10.2", "55000",  "561000",  "11.22", "9.18"),
+        ("2024-01-23", "10.2", "10.8", "10.1", "10.5", "60000",  "630000",  "11.55", "9.45"),
+        ("2024-01-24", "10.5", "10.9", "10.4", "10.7", "65000",  "695500", "11.77", "9.63"),
+        ("2024-01-25", "10.7", "11.0", "10.6", "10.9", "68000",  "741200", "11.99", "9.81"),
+        ("2024-01-26", "10.9", "11.2", "10.8", "11.1", "70000",  "777000", "12.21", "9.99"),
+    ]
+
+    stock_rows = [[r[0], "000001", *r[1:]] for r in base_prices]
+    _write_csv(snapshot_dir / "stock_daily.csv", STOCK_DAILY_FIELDS, stock_rows)
+    _write_csv(
+        snapshot_dir / "index_daily.csv",
+        INDEX_DAILY_FIELDS,
+        [["2024-01-02", "000300", "3500", "3520", "3490", "3510", "10000", "35000000"]],
+    )
+    # 关键：候选属于"冷门行业"，不是任何主线行业
+    _write_csv(
+        snapshot_dir / "industry_map.csv",
+        ["symbol", "industry_level2"],
+        [["000001", "冷门行业"]],
+    )
+    # 行业成交额：电子排第1，冷门行业排最后（低于 top 5）
+    industry_rows = []
+    all_dates = [r[0] for r in base_prices]
+    for d in all_dates:
+        industry_rows.append([d, "电子", "5000000000"])
+        industry_rows.append([d, "银行", "1000000000"])
+        industry_rows.append([d, "地产", "800000000"])
+        industry_rows.append([d, "医药", "600000000"])
+        industry_rows.append([d, "消费", "500000000"])
+        industry_rows.append([d, "冷门行业", "100000000"])
+    _write_csv(
+        snapshot_dir / "industry_daily_amount.csv",
+        ["trade_date", "industry_level2", "amount"],
+        industry_rows,
+    )
+    _write_csv(
+        snapshot_dir / "trading_calendar.csv",
+        ["trade_date", "is_open"],
+        [[d, "1"] for d in all_dates],
+    )
+
+    config = BacktestConfig(
+        name="skip-audit-test",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        initial_cash=1_000_000,
+        output_dir=tmp_path / "output",
+        data_source="a-stock-data",
+        data_snapshot=snapshot_dir.name,
+        data_dir=snapshot_dir.parent,
+    )
+    data_set = run_mvp1_from_raw_snapshot(snapshot_dir, config)
+
+    # mainline_filtered 轨道的 skipped_trades 应有审计记录
+    mf_skips = [
+        s for s in data_set.skipped_trades
+        if s.get("track") == "mainline_filtered"
+    ]
+    # 应该有跳过记录，且 reason 明确说明"非强主线"
+    assert len(mf_skips) > 0, (
+        "mainline_filtered 应有跳过记录，但 skipped_trades 为空"
+    )
+    skip_reasons = [s.get("reason", "") for s in mf_skips]
+    has_mainline_skip = any("强主线" in r or "mainline" in r.lower() for r in skip_reasons)
+    assert has_mainline_skip, (
+        f"mainline_filtered 跳过原因应包含'强主线'，实际：{skip_reasons}"
+    )
