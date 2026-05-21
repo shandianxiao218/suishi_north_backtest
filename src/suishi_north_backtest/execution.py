@@ -61,6 +61,9 @@ def execute_buy(
         stop_loss_pct = parameters.stop_loss_pct
         commission_rate = parameters.commission_rate
         slippage_rate = parameters.buy_slippage_rate
+        lot_size = parameters.lot_size
+    else:
+        lot_size = LOT_SIZE
 
     symbol = candidate.symbol
 
@@ -106,7 +109,7 @@ def execute_buy(
         )
 
     raw_shares = risk_amount / per_share_risk
-    shares = int(raw_shares // LOT_SIZE) * LOT_SIZE
+    shares = int(raw_shares // lot_size) * lot_size
 
     if shares == 0:
         return ExecutionResult(
@@ -118,8 +121,8 @@ def execute_buy(
 
     # 成本 = shares * entry_price（含滑点）
     cost = shares * entry_price
-    while cost > cash and shares >= LOT_SIZE:
-        shares -= LOT_SIZE
+    while cost > cash and shares >= lot_size:
+        shares -= lot_size
         cost = shares * entry_price
 
     if shares == 0:
@@ -140,8 +143,8 @@ def execute_buy(
     cash_remaining = cash - cost - total_cost
 
     if cash_remaining < 0:
-        while cash_remaining < 0 and shares >= LOT_SIZE:
-            shares -= LOT_SIZE
+        while cash_remaining < 0 and shares >= lot_size:
+            shares -= lot_size
             cost = shares * entry_price
             commission = cost * commission_rate
             slippage = shares * slippage_audit

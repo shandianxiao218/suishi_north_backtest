@@ -108,6 +108,44 @@ def test_select_candidates_uses_strategy_parameters() -> None:
     assert any(a.action == "open" for a in actions_open)
 
 
+def test_execute_buy_uses_lot_size_from_strategy_parameters() -> None:
+    """lot_size=100 和 lot_size=200 产生不同的取整股数。"""
+    # risk_pct=0.01, equity=1_000_000 -> risk_amount=10_000
+    # stop_loss_pct=0.05, entry_price≈10.0 -> per_share_risk=0.5
+    # raw_shares = 10000/0.5 = 20000
+    # lot_size=100 -> shares=20000
+    # lot_size=200 -> shares=20000 (刚好整除)
+    # 需要构造 raw_shares 不整除 200 的场景
+    # 用 equity=1_050_000: risk_amount=10500, raw=21000
+    # lot_size=100 -> 21000, lot_size=200 -> 21000... 还是整除
+    # 用 equity=1_030_000: risk_amount=10300, raw=20600
+    # lot_size=100 -> 20600, lot_size=200 -> 20600... 整除
+    # 用 equity=1_010_000: risk_amount=10100, raw=20200
+    # lot_size=100 -> 20200, lot_size=200 -> 20200... 整除
+    # 需要不同的 per_share_risk：entry=10.0*1.0005=10.005, stop=0.05
+    # per_share_risk = 10.005 * 0.05 = 0.50025
+    # raw = 10000 / 0.50025 ≈ 19990
+    # lot_size=100 -> 19900, lot_size=200 -> 19800
+    candidate = _make_candidate("000001")
+    default_params = default_mvp1_parameters()
+
+    buy_100 = execute_buy(
+        candidate=candidate, open_price=10.0, cash=1_000_000, equity=1_000_000,
+        parameters=default_params,
+    )
+    assert buy_100.executed
+
+    buy_200 = execute_buy(
+        candidate=candidate, open_price=10.0, cash=1_000_000, equity=1_000_000,
+        parameters=replace(default_params, lot_size=200),
+    )
+    assert buy_200.executed
+
+    assert buy_100.shares > buy_200.shares
+    assert buy_100.shares % 100 == 0
+    assert buy_200.shares % 200 == 0
+
+
 def test_execute_buy_uses_strategy_parameters() -> None:
     """不同 risk_pct 和 commission_rate 影响 shares 和 cash。"""
     candidate = _make_candidate("000001")
