@@ -335,3 +335,181 @@ def test_run_mvp1_from_raw_snapshot_does_not_use_future_data(tmp_path: Path) -> 
     assert len(data_full.candidates) >= len(data_early.candidates), (
         "早期 as_of 的候选数不应超过完整周期的候选数，否则存在未来函数"
     )
+
+
+def test_run_mvp1_from_raw_snapshot_excludes_candidates_after_as_of(
+    tmp_path: Path,
+) -> None:
+    """防未来函数：as_of 位于 AB 结构形成前，不应产生任何候选。"""
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+    _build_raw_snapshot(snapshot_dir)
+
+    # as_of=2024-01-08：A 点已出现 (01-04)，但 B 点尚未形成 (01-15)
+    # 不可能产生完整的 AB-BC-C 候选结构
+    config_before_b = BacktestConfig(
+        name="before-b-point",
+        start_date="2024-01-01",
+        end_date="2024-01-08",
+        initial_cash=1_000_000,
+        output_dir=tmp_path / "output-before-b",
+        data_source="a-stock-data",
+        data_snapshot=snapshot_dir.name,
+        data_dir=snapshot_dir.parent,
+    )
+    data_before_b = run_mvp1_from_raw_snapshot(snapshot_dir, config_before_b)
+
+    assert len(data_before_b.candidates) == 0, (
+        "as_of=2024-01-08 时 B 点尚未形成，不应产生候选，否则存在未来函数"
+    )
+
+
+def test_runner_closed_trade_cash_matches_buy_cash_plus_sell_proceeds(
+    tmp_path: Path,
+) -> None:
+    """断言最终现金等价于 initial_cash - entry_cost - buy_commission + sell_cash_proceeds。
+
+    验证买入佣金不被重复扣除。
+    """
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+
+    # 构造一个能快速触发退出的 snapshot：
+    # 在信号日之后立即大幅下跌触发应急止损
+    manifest = {
+        "data_version": "cash-test-v1",
+        "source": "cash-test",
+        "created_at": "2024-01-01T00:00:00+08:00",
+        "stock_daily_file": "stock_daily.csv",
+        "index_daily_file": "index_daily.csv",
+        "industry_map_file": "industry_map.csv",
+        "industry_daily_amount_file": "industry_daily_amount.csv",
+        "trading_calendar_file": "trading_calendar.csv",
+    }
+    (snapshot_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # A=8.0 (01-04), B=12.0 (01-15), C=10.2 (01-22)
+    # 信号日 01-24, 买入 01-25
+    # 买入后应急止损：entry_price 下跌 5% 以上
+    # 01-25 买入 entry_price ≈ 10.7*1.0005 = 10.7054
+    # 01-26 close=5.0 -> 从 entry_price 下跌超过 5% -> 应急止损信号
+    # 01-29 卖出
+    base_prices = [
+        ("2024-01-02", "9.5",  "9.8",  "9.0",  "9.5",  "50000",  "475000",  "10.45", "8.55"),
+        ("2024-01-03", "9.2",  "9.5",  "8.8",  "9.0",  "45000",  "405000",  "9.90",  "8.10"),
+        ("2024-01-04", "8.8",  "9.0",  "7.9",  "8.0",  "60000",  "480000",  "8.80",  "7.20"),
+        ("2024-01-05", "8.3",  "9.0",  "8.1",  "8.8",  "55000",  "484000",  "9.68",  "7.92"),
+        ("2024-01-08", "9.0",  "9.8",  "8.9",  "9.6",  "70000",  "672000",  "10.56", "8.64"),
+        ("2024-01-09", "9.8",  "10.5", "9.7",  "10.3", "80000",  "824000",  "11.33", "9.27"),
+        ("2024-01-10", "10.5", "11.0", "10.2", "10.8", "85000",  "918000",  "11.88", "9.72"),
+        ("2024-01-11", "10.9", "11.5", "10.8", "11.3", "90000",  "1017000", "12.43", "10.17"),
+        ("2024-01-12", "11.5", "12.2", "11.3", "11.8", "95000",  "1121000", "12.98", "10.62"),
+        ("2024-01-15", "12.0", "12.8", "11.8", "12.0",  "100000", "1200000", "13.20", "10.80"),
+        ("2024-01-16", "11.8", "12.0", "11.2", "11.5", "80000",  "920000",  "12.65", "10.35"),
+        ("2024-01-17", "11.3", "11.5", "10.8", "11.0", "75000",  "825000",  "12.10", "9.90"),
+        ("2024-01-18", "10.8", "11.2", "10.5", "10.8", "65000",  "702000",  "11.88", "9.72"),
+        ("2024-01-19", "10.5", "10.8", "10.2", "10.5", "60000",  "630000",  "11.55", "9.45"),
+        ("2024-01-22", "10.3", "10.6", "10.0", "10.2", "55000",  "561000",  "11.22", "9.18"),
+        ("2024-01-23", "10.2", "10.8", "10.1", "10.5", "60000",  "630000",  "11.55", "9.45"),
+        ("2024-01-24", "10.5", "10.9", "10.4", "10.7", "65000",  "695500", "11.77", "9.63"),
+        # T+1 买入日：open=10.7
+        ("2024-01-25", "10.7", "11.0", "10.6", "10.9", "68000",  "741200", "11.99", "9.81"),
+        # 大幅下跌触发应急止损（entry≈10.7054, 跌5%→10.17）
+        ("2024-01-26", "6.0",  "6.5",  "5.5",  "5.8",   "100000", "580000",  "6.60",  "5.40"),
+        # T+1 卖出日
+        ("2024-01-29", "5.8",  "6.2",  "5.5",  "5.9",   "80000",  "472000",  "6.38",  "5.22"),
+    ]
+
+    stock_rows = [[r[0], "000001", *r[1:]] for r in base_prices]
+    _write_csv(snapshot_dir / "stock_daily.csv", STOCK_DAILY_FIELDS, stock_rows)
+
+    _write_csv(
+        snapshot_dir / "index_daily.csv",
+        INDEX_DAILY_FIELDS,
+        [["2024-01-02", "000300", "3500", "3520", "3490", "3510", "10000", "35000000"]],
+    )
+
+    _write_csv(
+        snapshot_dir / "industry_map.csv",
+        ["symbol", "industry_level2"],
+        [["000001", "电子"]],
+    )
+
+    industry_rows = []
+    for r in base_prices:
+        for ind, amt in [("电子", "5000000000"), ("银行", "1000000000"),
+                         ("地产", "800000000"), ("医药", "600000000"),
+                         ("消费", "500000000"), ("其他", "400000000")]:
+            industry_rows.append([r[0], ind, amt])
+    _write_csv(
+        snapshot_dir / "industry_daily_amount.csv",
+        ["trade_date", "industry_level2", "amount"],
+        industry_rows,
+    )
+
+    cal_rows = [[r[0], "1"] for r in base_prices]
+    _write_csv(
+        snapshot_dir / "trading_calendar.csv",
+        ["trade_date", "is_open"],
+        cal_rows,
+    )
+
+    config = BacktestConfig(
+        name="cash-test",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        initial_cash=1_000_000,
+        output_dir=tmp_path / "output",
+        data_source="a-stock-data",
+        data_snapshot=snapshot_dir.name,
+        data_dir=snapshot_dir.parent,
+    )
+    data_set = run_mvp1_from_raw_snapshot(snapshot_dir, config)
+
+    assert len(data_set.trades) >= 1, "必须有至少一笔平仓交易"
+    trade = data_set.trades[0]
+    final_cash = float(data_set.equity_curve[-1]["cash"])
+
+    # 手动计算预期现金：
+    # initial_cash - entry_cost - buy_commission + sell_cash_proceeds
+    entry_price = float(trade["entry_price"])
+    shares = int(trade["entry_shares"])
+    exit_price = float(trade["exit_price"])
+    buy_commission = float(trade["commission"]) - float(trade.get("stamp_tax", "0"))
+    # trade.commission = buy_commission + sell_commission
+    # 需要从 ClosedTrade 获取更精确的值
+
+    # 直接从 equity_curve 的最终 cash 值验证
+    # 等价公式：cash = initial_cash - shares*entry_price - buy_cost + sell_proceeds
+    # 其中 buy_cost 只含买入佣金（滑点已计入 entry_price）
+    # sell_proceeds = shares*exit_price*(1-slippage) - sell_commission - stamp_tax
+
+    # 用更直接的方式：最终 cash 不应小于 initial_cash - entry_cost - 2*buy_commission
+    # 如果 buy_commission 被重复扣，cash 会比正确值少 buy_commission
+    entry_cost = shares * entry_price
+    trade_commission = float(trade["commission"])  # buy + sell commission total
+    stamp_tax = float(trade["stamp_tax"])
+
+    # 正确公式：cash = initial - entry_cost - buy_commission + sell_proceeds
+    # sell_proceeds = shares * exit_price * (1 - slippage_rate) - sell_commission - stamp_tax
+    # 近似验证：cash 应约等于 initial + gross_pnl - all_costs
+    # 且 gross_pnl = (exit_price - entry_price) * shares
+    # all_costs = buy_commission + sell_commission + stamp_tax + slippages
+    # 注意 slippages 已计入 entry_price 和 exit_price
+
+    # 精确验证：最终 cash = initial + net_pnl
+    # net_pnl = gross_pnl - total_cost (不含重复)
+    # 但 net_pnl 在 trade 中记录了扣全部成本后的值
+    # 所以 cash = initial + trade.net_pnl (如果现金公式正确)
+    net_pnl = float(trade["net_pnl"])
+    expected_cash = 1_000_000 + net_pnl
+
+    # 允许 1 元 rounding 误差
+    assert abs(final_cash - expected_cash) < 1.0, (
+        f"现金不一致：final_cash={final_cash:.2f}, "
+        f"expected={expected_cash:.2f}, "
+        f"diff={abs(final_cash - expected_cash):.2f}，"
+        f"可能买入佣金被重复扣除"
+    )

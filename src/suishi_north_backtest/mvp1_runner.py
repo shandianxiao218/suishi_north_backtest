@@ -48,6 +48,7 @@ class ClosedTrade:
     total_cost: float
     gross_pnl: float
     net_pnl: float
+    sell_cash_proceeds: float
 
 
 BENCHMARK_CODE_TO_NAME = {
@@ -314,7 +315,7 @@ def _simulate_portfolio(
             bars=bars_by_symbol.get(candidate.symbol, []),
         )
         if trade is not None:
-            cash += trade.net_pnl + position.shares * position.entry_price
+            cash = position.cash_after_entry + trade.sell_cash_proceeds
             trades.append(trade)
             current_holdings = [symbol for symbol in current_holdings if symbol != candidate.symbol]
             equity_points.append(
@@ -483,6 +484,7 @@ def _close_position_if_possible(
             total_cost=total_cost,
             gross_pnl=gross_pnl,
             net_pnl=net_pnl,
+            sell_cash_proceeds=float(sell.cash_proceeds or 0.0),
         )
     return None
 
