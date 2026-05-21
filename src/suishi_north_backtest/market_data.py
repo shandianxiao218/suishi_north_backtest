@@ -21,6 +21,8 @@ class StockDaily:
     limit_up: float | None
     limit_down: float | None
     is_suspended: bool
+    stock_name: str = ""
+    is_delisting: bool = False
 
 
 @dataclass
@@ -106,6 +108,17 @@ def _derive_is_st(row: dict[str, str]) -> bool:
     return False
 
 
+def _derive_is_delisting(row: dict[str, str]) -> bool:
+    if "is_delisting" in row:
+        val = row["is_delisting"].strip().lower()
+        if val:
+            return val in ("true", "1", "yes")
+    stock_name = row.get("stock_name", "").strip()
+    if stock_name:
+        return "退" in stock_name
+    return False
+
+
 def _load_stock_daily(path: Path) -> list[StockDaily]:
     rows = _read_csv_rows(path)
     result = []
@@ -125,6 +138,8 @@ def _load_stock_daily(path: Path) -> list[StockDaily]:
                 limit_up=_to_float(row.get("limit_up")),
                 limit_down=_to_float(row.get("limit_down")),
                 is_suspended=not has_open,
+                stock_name=row.get("stock_name", "").strip(),
+                is_delisting=_derive_is_delisting(row),
             )
         )
     result.sort(key=lambda s: (s.trade_date, s.symbol))

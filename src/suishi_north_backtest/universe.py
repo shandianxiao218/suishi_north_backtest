@@ -23,6 +23,7 @@ class TradabilityAudit:
 
 DEFAULT_NEW_STOCK_DAYS = 120
 APPROX_TRADING_DAYS_PER_YEAR = 250
+DEFAULT_MIN_AMOUNT = 0.0
 
 
 def build_universe(
@@ -30,8 +31,9 @@ def build_universe(
     as_of: str | None = None,
     new_stock_days: int = DEFAULT_NEW_STOCK_DAYS,
     listing_dates: dict[str, str] | None = None,
+    min_amount: float = DEFAULT_MIN_AMOUNT,
 ) -> list[UniverseEntry]:
-    entries, _ = _build_universe_internal(md, as_of, new_stock_days, listing_dates)
+    entries, _ = _build_universe_internal(md, as_of, new_stock_days, listing_dates, min_amount)
     return entries
 
 
@@ -40,8 +42,9 @@ def build_universe_with_audit(
     as_of: str | None = None,
     new_stock_days: int = DEFAULT_NEW_STOCK_DAYS,
     listing_dates: dict[str, str] | None = None,
+    min_amount: float = DEFAULT_MIN_AMOUNT,
 ) -> tuple[list[UniverseEntry], list[TradabilityAudit]]:
-    return _build_universe_internal(md, as_of, new_stock_days, listing_dates)
+    return _build_universe_internal(md, as_of, new_stock_days, listing_dates, min_amount)
 
 
 def _build_universe_internal(
@@ -49,6 +52,7 @@ def _build_universe_internal(
     as_of: str | None,
     new_stock_days: int,
     listing_dates: dict[str, str] | None,
+    min_amount: float,
 ) -> tuple[list[UniverseEntry], list[TradabilityAudit]]:
     industry_by_symbol = {m.symbol: m.industry_level2 for m in md.industry_map}
 
@@ -61,7 +65,7 @@ def _build_universe_internal(
 
     for s in md.stock_daily:
         excluded, reason = _check_exclusion(
-            s, as_of, calendar_dates, new_stock_days, listing_dates
+            s, as_of, calendar_dates, new_stock_days, listing_dates, min_amount,
         )
         if excluded:
             audit.append(
@@ -102,12 +106,22 @@ def _check_exclusion(
     calendar_dates: list[str],
     new_stock_days: int,
     listing_dates: dict[str, str] | None,
+    min_amount: float,
 ) -> tuple[bool, str]:
-    if s.is_st:
+    if _is_beijing_exchange(s.symbol):
+        return True, f"北交所股票：{s.symbol}"
+
+    if s.is_st or _is_st_from_name(s.stock_name):
         return True, f"ST 股票：{s.symbol}"
+
+    if s.is_delisting or _is_delisting_from_name(s.stock_name):
+        return True, f"退市股票：{s.symbol}"
 
     if s.is_suspended:
         return True, f"停牌：{s.symbol}"
+
+    if min_amount > 0 and s.amount is not None and s.amount < min_amount:
+        return True, f"低流动性（成交额 {s.amount:.0f} < {min_amount:.0f}）：{s.symbol}"
 
     if listing_dates and s.symbol in listing_dates and as_of:
         list_date_str = listing_dates[s.symbol]
@@ -121,6 +135,24 @@ def _check_exclusion(
             )
 
     return False, ""
+
+
+def _is_beijing_exchange(symbol: str) -> bool:
+    """判断是否为北交所或新三板股票。
+
+    北交所/新三板代码规则：
+    - 8xxxxx（北交所/新三板）
+    - 4xxxxx（新三板/老三板）
+    """
+    return symbol.startswith("8") or symbol.startswith("4")
+
+
+def _is_st_from_name(stock_name: str) -> bool:
+    return stock_name.startswith("ST") or stock_name.startswith("*ST")
+
+
+def _is_delisting_from_name(stock_name: str) -> bool:
+    return "退" in stock_name
 
 
 def _count_trading_days_between(
