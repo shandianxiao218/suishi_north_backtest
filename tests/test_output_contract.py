@@ -139,6 +139,7 @@ class TestEngineOutputsMatchOutputContract:
             "end_date",
             "initial_cash",
             "code_version",
+            "created_at",
             "data_source",
             "data_version",
             "parameter_set",
@@ -156,8 +157,10 @@ class TestEngineOutputsMatchOutputContract:
         for field in [
             "name",
             "initial_cash",
+            "ending_equity",
             "total_return",
             "max_drawdown",
+            "trade_count",
         ]:
             assert field in spec.required_fields, (
                 f"metrics.json 缺少必填字段：{field}"
@@ -200,7 +203,7 @@ class TestAStockDataProviderRejectsSnapshotWithMissingRequiredColumns:
                 header = ",".join(spec.required_columns)
                 path.write_text(header + "\n", encoding="utf-8-sig")
 
-        metrics = {"name": "test", "initial_cash": 1000000, "total_return": 0.0, "max_drawdown": 0.0}
+        metrics = {"name": "test", "initial_cash": 1000000, "ending_equity": 1034200.0, "total_return": 0.0342, "max_drawdown": 0.0125, "trade_count": 1}
         (snapshot_dir / "metrics.json").write_text(
             json.dumps(metrics), encoding="utf-8"
         )
@@ -236,7 +239,7 @@ class TestAStockDataProviderRejectsSnapshotWithMissingRequiredColumns:
             header = ",".join(spec.required_columns)
             path.write_text(header + "\n", encoding="utf-8-sig")
 
-        metrics = {"name": "test", "initial_cash": 1000000, "total_return": 0.0, "max_drawdown": 0.0}
+        metrics = {"name": "test", "initial_cash": 1000000, "ending_equity": 1034200.0, "total_return": 0.0342, "max_drawdown": 0.0125, "trade_count": 1}
         (snapshot_dir / "metrics.json").write_text(
             json.dumps(metrics), encoding="utf-8"
         )
@@ -334,7 +337,7 @@ class TestValidateOutputContractReportsMissingColumns:
                 path.write_text(header + "\n", encoding="utf-8-sig")
 
         # 补全 metrics.json
-        metrics = {"name": "test", "initial_cash": 1000000, "total_return": 0.0, "max_drawdown": 0.0}
+        metrics = {"name": "test", "initial_cash": 1000000, "ending_equity": 1034200.0, "total_return": 0.0342, "max_drawdown": 0.0125, "trade_count": 1}
         (tmp_path / "metrics.json").write_text(
             json.dumps(metrics), encoding="utf-8"
         )
@@ -395,3 +398,26 @@ class TestValidateJsonRequiredFields:
         assert len(errors) == 1
         assert "start_date" in errors[0]
         assert "end_date" in errors[0]
+
+
+class TestMetricsRequiredFieldsIncludeEndingEquityAndTradeCount:
+    """metrics.json 必须要求 ending_equity 和 trade_count。"""
+
+    def test_ending_equity_in_required_fields(self):
+        specs = {s.filename: s for s in mvp1_json_specs()}
+        spec = specs["metrics.json"]
+        assert "ending_equity" in spec.required_fields
+
+    def test_trade_count_in_required_fields(self):
+        specs = {s.filename: s for s in mvp1_json_specs()}
+        spec = specs["metrics.json"]
+        assert "trade_count" in spec.required_fields
+
+
+class TestRunMetadataRequiredFieldsIncludeCreatedAt:
+    """run_metadata.json 必须要求 created_at。"""
+
+    def test_created_at_in_required_fields(self):
+        specs = {s.filename: s for s in mvp1_json_specs()}
+        spec = specs["run_metadata.json"]
+        assert "created_at" in spec.required_fields

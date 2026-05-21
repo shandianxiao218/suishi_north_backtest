@@ -144,7 +144,7 @@ def create_snapshot(root: Path, name: str) -> Path:
     )
     write_json(
         snapshot_dir / "metrics.json",
-        {"trade_count": 1, "total_return": 0.01},
+        {"name": "test", "initial_cash": 1000000, "ending_equity": 1010000, "total_return": 0.01, "max_drawdown": 0.005, "trade_count": 1},
     )
     write_csv(snapshot_dir / "equity_curve.csv", ["date", "cash", "equity", "drawdown", "track"], [])
     write_csv(

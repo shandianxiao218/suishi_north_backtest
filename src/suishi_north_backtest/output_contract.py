@@ -155,6 +155,7 @@ def mvp1_json_specs() -> list[JsonOutputSpec]:
                 "end_date",
                 "initial_cash",
                 "code_version",
+                "created_at",
                 "data_source",
                 "data_version",
                 "parameter_set",
@@ -168,8 +169,10 @@ def mvp1_json_specs() -> list[JsonOutputSpec]:
             required_fields=[
                 "name",
                 "initial_cash",
+                "ending_equity",
                 "total_return",
                 "max_drawdown",
+                "trade_count",
             ],
         ),
     ]

@@ -21,6 +21,7 @@ from suishi_north_backtest.output_contract import (
     CSV_ENCODING,
     mvp1_csv_specs,
     mvp1_required_files,
+    validate_output_contract,
 )
 
 
@@ -118,6 +119,10 @@ def main() -> int:
     prepare_output_dir(args.output_dir, args.keep_output, report)
     if not report.errors:
         run_cli(repo_root, args, report)
+
+    contract_errors = validate_output_contract(args.output_dir, profile=args.profile)
+    for error in contract_errors:
+        report.fail(error)
 
     validate_smoke_outputs(args.output_dir, report)
     validate_metadata(args.output_dir / "run_metadata.json", args, report)
