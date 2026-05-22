@@ -97,7 +97,7 @@ def test_signal_audit_never_uses_future_data() -> None:
 
 def test_find_candidates_records_signal_audit_metadata() -> None:
     candidates = find_candidates(
-        bars_from_prices([9.5, 10.0, 11.0, 12.0, 13.0, 12.0, 11.5, 11.8, 12.0]),
+        bars_from_prices([10.5, 10.0, 10.4, 11.5, 13.0, 12.0, 11.5, 11.8, 12.0]),
         as_of="2024-01-30",
     )
 
