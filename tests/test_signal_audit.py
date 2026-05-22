@@ -76,7 +76,7 @@ def test_weekly_filter_blocks_candidate() -> None:
 
 
 def test_annual_filter_blocks_candidate() -> None:
-    prices = [20.0] * 20 + [10.0, 12.0, 13.0, 11.5, 11.8, 11.9]
+    prices = [30.0] * 14 + [10.0, 10.0, 10.0, 12.0, 13.0, 11.5, 11.8, 11.9]
     rows = audit_signal_candidates(bars_from_prices(prices), as_of="2024-02-20")
 
     annual_rows = [row for row in rows if row.stage == "annual_filter"]
@@ -97,7 +97,7 @@ def test_signal_audit_never_uses_future_data() -> None:
 
 def test_find_candidates_records_signal_audit_metadata() -> None:
     candidates = find_candidates(
-        bars_from_prices([10.5, 10.0, 10.4, 11.5, 13.0, 12.0, 11.5, 11.8, 12.0]),
+        bars_from_prices([11.0, 10.0, 10.5, 11.5, 13.0, 11.7, 11.6, 11.55, 11.5, 11.55, 11.8]),
         as_of="2024-01-30",
     )
 

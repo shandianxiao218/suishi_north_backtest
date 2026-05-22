@@ -99,6 +99,9 @@ class TestEngineOutputsMatchOutputContract:
         spec = specs["candidates.csv"]
         assert "signal_date" in spec.required_columns
         assert "symbol" in spec.required_columns
+        assert "failure_reason" in spec.required_columns
+        assert "as_of" in spec.required_columns
+        assert "signal_rule_version" in spec.required_columns
         assert "score" in spec.required_columns
         assert "audit_note" in spec.required_columns
 

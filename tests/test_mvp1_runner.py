@@ -15,7 +15,9 @@ from pathlib import Path
 
 from suishi_north_backtest.config import BacktestConfig
 from suishi_north_backtest.engine import write_mvp1_dataset_outputs
-from suishi_north_backtest.mvp1_runner import run_mvp1_from_raw_snapshot
+from suishi_north_backtest.mainline import MainlineStatus
+from suishi_north_backtest.mvp1_runner import _candidate_rows, run_mvp1_from_raw_snapshot
+from suishi_north_backtest.signals import CandidateSignal, SIGNAL_RULE_VERSION
 
 
 STOCK_DAILY_FIELDS = [
@@ -231,6 +233,50 @@ def test_raw_runner_can_write_mvp1_output_dir(tmp_path: Path) -> None:
     assert metadata["data_version"] == "mvp1-runner-test-v1"
     assert metadata["parameter_set"]
     assert metadata["universe"]
+
+    with (result.output_dir / "candidates.csv").open("r", encoding="utf-8-sig", newline="") as file:
+        candidates = list(csv.DictReader(file))
+    assert candidates
+    first_candidate = candidates[0]
+    assert "as_of" in first_candidate
+    assert "signal_rule_version" in first_candidate
+    assert "failure_reason" in first_candidate
+
+
+def test_candidate_rows_use_signal_audit_fields() -> None:
+    candidate = CandidateSignal(
+        signal_date="2024-01-24",
+        symbol="000001",
+        a_date="2024-01-04",
+        a_price=8.0,
+        b_date="2024-01-15",
+        b_price=12.0,
+        c_date="2024-01-22",
+        c_price=10.2,
+        ab_gain_pct=50.0,
+        bc_retracement_pct=45.0,
+        distance_to_c_pct=4.9,
+        weekly_filter_passed=False,
+        annual_filter_passed=False,
+        failure_reason="周线方向过滤未通过；年线弱结构过滤未通过",
+        as_of="2024-02-20",
+        signal_rule_version=SIGNAL_RULE_VERSION,
+        audit_note="来自 CandidateSignal 的审计说明",
+    )
+
+    rows = _candidate_rows(
+        [candidate],
+        industry_by_symbol={"000001": "电子"},
+        mainline_status_by_key={("2024-01-24", "电子"): MainlineStatus.STRONG},
+        mainline_rank_by_key={("2024-01-24", "电子"): 1},
+    )
+
+    assert rows[0]["weekly_filter_passed"] == "false"
+    assert rows[0]["annual_filter_passed"] == "false"
+    assert rows[0]["failure_reason"] == "周线方向过滤未通过；年线弱结构过滤未通过"
+    assert rows[0]["as_of"] == "2024-02-20"
+    assert rows[0]["signal_rule_version"] == SIGNAL_RULE_VERSION
+    assert rows[0]["audit_note"] == "来自 CandidateSignal 的审计说明"
 
 
 def test_run_mvp1_from_raw_snapshot_outputs_skip_audit_when_no_candidate(
