@@ -438,3 +438,34 @@ def test_load_market_data_count(tmp_path: Path) -> None:
     assert len(md.industry_map) == 2
     assert len(md.industry_daily_amount) == 4
     assert len(md.trading_calendar) == 4
+
+
+def test_market_data_reads_market_field(tmp_path: Path) -> None:
+    """market 列应能读取到 StockDaily.market 字段。"""
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+    write_manifest(snapshot_dir)
+
+    extended_fields = STOCK_DAILY_FIELDS + ["market", "stock_name"]
+    write_csv(
+        snapshot_dir,
+        "stock_daily.csv",
+        extended_fields,
+        [
+            ["2024-01-02", "000001", "10.5", "11.0", "10.3", "10.8", "100000", "1080000", "SZ", "平安银行"],
+            ["2024-01-02", "830799", "5.0", "5.2", "4.9", "5.1", "50000", "255000", "BJ", "北交所股票"],
+            ["2024-01-02", "688001", "20.0", "21.0", "19.5", "20.5", "30000", "615000", "SH", "科创板股票"],
+        ],
+    )
+    write_csv(snapshot_dir, "index_daily.csv", INDEX_DAILY_FIELDS, [["2024-01-02", "000300", "3500.0", "3520.0", "3490.0", "3510.0", "10000000", "35000000000"]])
+    write_csv(snapshot_dir, "industry_map.csv", ["symbol", "industry_level2"], [["000001", "银行"]])
+    write_csv(snapshot_dir, "industry_daily_amount.csv", ["trade_date", "industry_level2", "amount"], [["2024-01-02", "银行", "5000000000"]])
+    write_csv(snapshot_dir, "trading_calendar.csv", ["trade_date", "is_open"], [["2024-01-02", "1"]])
+
+    manifest = validate_raw_snapshot(snapshot_dir)
+    md = load_market_data(snapshot_dir, manifest)
+
+    by_symbol = {s.symbol: s for s in md.stock_daily}
+    assert by_symbol["000001"].market == "SZ"
+    assert by_symbol["830799"].market == "BJ"
+    assert by_symbol["688001"].market == "SH"
