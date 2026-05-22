@@ -182,8 +182,7 @@ def _find_candidates_for_symbol(
 
                 weekly_passed = _is_weekly_filter_passed(bars, sig_idx)
                 annual_passed = _is_annual_filter_passed(bars, sig_idx)
-                if not weekly_passed or not annual_passed:
-                    continue
+                failure_reason = _filter_failure_reason(weekly_passed, annual_passed)
 
                 candidates.append(
                     CandidateSignal(
@@ -200,18 +199,27 @@ def _find_candidates_for_symbol(
                         distance_to_c_pct=round(distance_pct, 2),
                         weekly_filter_passed=weekly_passed,
                         annual_filter_passed=annual_passed,
-                        failure_reason="",
+                        failure_reason=failure_reason,
                         as_of=as_of or sig_bar.trade_date,
                         signal_rule_version=SIGNAL_RULE_VERSION,
                         audit_note=(
-                            "passed AB gain, BC retracement, C window, turn-strong, "
-                            "weekly direction and annual structure filters without future data"
+                            "passed structural ABC/C checks; "
+                            "weekly/annual filter status recorded for audit"
                         ),
                     )
                 )
                 break
 
     return candidates
+
+
+def _filter_failure_reason(weekly_passed: bool, annual_passed: bool) -> str:
+    reasons = []
+    if not weekly_passed:
+        reasons.append("周线方向过滤未通过")
+    if not annual_passed:
+        reasons.append("年线弱结构过滤未通过")
+    return "；".join(reasons)
 
 
 def _find_a_point(
@@ -250,11 +258,7 @@ def _is_turn_strong(bars: list[StockDaily], sig_idx: int, c_idx: int) -> bool:
 
 
 def _is_weekly_filter_passed(bars: list[StockDaily], sig_idx: int) -> bool:
-    """日线代理的周线方向过滤。
-
-    MVP-1 仍是日线代理系统；这里用最近约 5 个交易日方向做保守代理。
-    数据不足 5 个交易日时不阻断，避免对短 fixture 过拟合。
-    """
+    """日线代理的周线方向过滤。"""
     if sig_idx < 5:
         return True
     current = bars[sig_idx].close
@@ -264,11 +268,7 @@ def _is_weekly_filter_passed(bars: list[StockDaily], sig_idx: int) -> bool:
 
 
 def _is_annual_filter_passed(bars: list[StockDaily], sig_idx: int) -> bool:
-    """日线代理的年线弱结构过滤。
-
-    真实年线需要更长历史。MVP-1 先在可用窗口超过 20 个交易日时启用弱结构过滤：
-    若信号日收盘显著低于可用长期均线，视为年线弱结构。
-    """
+    """日线代理的年线弱结构过滤。"""
     if sig_idx < 20:
         return True
     window = bars[max(0, sig_idx - 249) : sig_idx + 1]
