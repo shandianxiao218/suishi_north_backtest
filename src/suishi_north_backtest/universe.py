@@ -64,18 +64,22 @@ def _build_universe_internal(
         e.trade_date for e in md.trading_calendar if e.is_open
     )
 
-    long_suspended = _compute_long_suspended(md, long_suspension_days, as_of)
+    long_suspended_from = _compute_long_suspended_from(md, long_suspension_days)
 
     universe: list[UniverseEntry] = []
     audit: list[TradabilityAudit] = []
 
     for s in md.stock_daily:
-        # 长期停牌优先于单日停牌检查
+        # 长期停牌：只从连续停牌达到阈值的日期起排除，不回溯历史
         excluded = False
         reason = ""
-        if long_suspension_days > 0 and s.symbol in long_suspended:
+        if (
+            long_suspension_days > 0
+            and s.symbol in long_suspended_from
+            and s.trade_date >= long_suspended_from[s.symbol]
+        ):
             excluded = True
-            reason = f"长期停牌（连续 {long_suspended[s.symbol]} 个交易日）：{s.symbol}"
+            reason = f"长期停牌：{s.symbol}"
         if not excluded:
             excluded, reason = _check_exclusion(
                 s, as_of, calendar_dates, new_stock_days, listing_dates, min_amount,
@@ -169,40 +173,42 @@ def _is_delisting_from_name(stock_name: str) -> bool:
     return "退" in stock_name
 
 
-def _compute_long_suspended(
+def _compute_long_suspended_from(
     md: MarketData,
     long_suspension_days: int,
-    as_of: str | None,
-) -> dict[str, int]:
-    """计算截至 as_of 连续停牌天数超过阈值的股票。
+) -> dict[str, str]:
+    """计算每个 symbol 从哪个日期开始长期停牌。
+
+    按日期正序扫描，找出连续停牌天数首次达到阈值的日期。
+    只有从该日期起的 bar 才被排除，不回溯历史正常交易日。
 
     Returns:
-        symbol -> 连续停牌天数 的映射（仅包含超过阈值的）。
+        symbol -> 长期停牌起始日期 的映射。
     """
     if long_suspension_days <= 0:
         return {}
 
-    # 按日期排序，按 symbol 分组
     by_symbol: dict[str, list[StockDaily]] = {}
     for s in md.stock_daily:
         by_symbol.setdefault(s.symbol, []).append(s)
 
-    result: dict[str, int] = {}
+    result: dict[str, str] = {}
     for symbol, bars in by_symbol.items():
         bars = sorted(bars, key=lambda b: b.trade_date)
-        if as_of:
-            bars = [b for b in bars if b.trade_date <= as_of]
 
-        # 从末尾往前数连续停牌天数
+        # 找连续停牌段，记录每个段的起始日期和长度
         consecutive = 0
-        for b in reversed(bars):
+        seg_start: str | None = None
+        for b in bars:
             if b.is_suspended:
+                if consecutive == 0:
+                    seg_start = b.trade_date
                 consecutive += 1
+                if consecutive >= long_suspension_days and symbol not in result:
+                    result[symbol] = seg_start
             else:
-                break
-
-        if consecutive >= long_suspension_days:
-            result[symbol] = consecutive
+                consecutive = 0
+                seg_start = None
 
     return result
 

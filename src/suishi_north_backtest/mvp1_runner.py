@@ -83,11 +83,23 @@ def run_mvp1_from_raw_snapshot(
     market_data = load_market_data(raw_snapshot_dir, manifest)
 
     as_of = config.end_date
-    universe_entries = _filter_as_of_universe(market_data, as_of, parameters)
+    universe_entries, tradability_audit = _filter_as_of_universe(market_data, as_of, parameters)
     tradable_symbols_by_date = {
         (entry.trade_date, entry.symbol) for entry in universe_entries
     }
     industry_by_symbol = {entry.symbol: entry.industry_level2 for entry in universe_entries}
+
+    # 股票池排除审计写入 skipped_trades
+    universe_skip_rows: list[dict[str, object]] = []
+    for a in tradability_audit:
+        if a.buy_restricted or a.sell_deferred:
+            continue  # 可交易性审计在轨道级别处理，不写入 universe_skip
+        universe_skip_rows.append({
+            "signal_date": a.trade_date,
+            "track": "universe_filter",
+            "symbol": a.symbol,
+            "reason": a.reason,
+        })
 
     mainlines = compute_mainlines(market_data.industry_daily_amount, as_of=as_of, parameters=parameters)
     mainline_status_by_key = {
@@ -132,6 +144,9 @@ def run_mvp1_from_raw_snapshot(
         all_holdings.extend(holdings)
         all_skipped.extend(skipped_rows)
         all_equity.extend(equity_points)
+
+    # 股票池排除审计追加到 skipped_trades
+    all_skipped.extend(universe_skip_rows)
 
     # 合并两条轨道的净值曲线（按日期排序）
     all_equity.sort(key=lambda p: str(p.get("date", "")))
@@ -216,12 +231,13 @@ def _filter_as_of_universe(
     market_data: MarketData,
     as_of: str,
     parameters: StrategyParameters | None = None,
-) -> list:
-    from suishi_north_backtest.universe import build_universe
+) -> tuple[list, list]:
+    """返回 (universe_entries, tradability_audit)。"""
+    from suishi_north_backtest.universe import build_universe_with_audit
 
     min_amount = parameters.min_daily_amount if parameters else 0.0
     long_suspension_days = parameters.long_suspension_days if parameters else 0
-    return build_universe(
+    return build_universe_with_audit(
         market_data,
         as_of=as_of,
         min_amount=min_amount,

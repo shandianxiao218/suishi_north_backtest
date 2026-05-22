@@ -896,3 +896,194 @@ def test_runner_filters_low_liquidity_stock(tmp_path: Path) -> None:
     assert len(data_set.trades) == 0, (
         f"低流动性股票不应产生交易，但得到 {len(data_set.trades)} 笔"
     )
+
+
+def test_runner_records_low_liquidity_skip_reason(tmp_path: Path) -> None:
+    """runner 输出中必须包含低流动性排除的审计原因。"""
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+
+    manifest = {
+        "data_version": "skip-reason-v1",
+        "source": "skip-reason-test",
+        "created_at": "2024-01-01T00:00:00+08:00",
+        "stock_daily_file": "stock_daily.csv",
+        "index_daily_file": "index_daily.csv",
+        "industry_map_file": "industry_map.csv",
+        "industry_daily_amount_file": "industry_daily_amount.csv",
+        "trading_calendar_file": "trading_calendar.csv",
+    }
+    (snapshot_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # A-B-C 结构候选 + 低成交额
+    base_prices = [
+        ("2024-01-02", "9.5",  "9.8",  "9.0",  "9.5",  "50000",  "500",    "10.45", "8.55"),
+        ("2024-01-03", "9.2",  "9.5",  "8.8",  "9.0",  "45000",  "450",    "9.90",  "8.10"),
+        ("2024-01-04", "8.8",  "9.0",  "7.9",  "8.0",  "60000",  "480",    "8.80",  "7.20"),
+        ("2024-01-05", "8.3",  "9.0",  "8.1",  "8.8",  "55000",  "484",    "9.68",  "7.92"),
+        ("2024-01-08", "9.0",  "9.8",  "8.9",  "9.6",  "70000",  "672",    "10.56", "8.64"),
+        ("2024-01-09", "9.8",  "10.5", "9.7",  "10.3", "80000",  "824",    "11.33", "9.27"),
+        ("2024-01-10", "10.5", "11.0", "10.2", "10.8", "85000",  "918",    "11.88", "9.72"),
+        ("2024-01-11", "10.9", "11.5", "10.8", "11.3", "90000",  "1017",   "12.43", "10.17"),
+        ("2024-01-12", "11.5", "12.2", "11.3", "11.8", "95000",  "1121",   "12.98", "10.62"),
+        ("2024-01-15", "12.0", "12.8", "11.8", "12.0",  "100000", "1200",   "13.20", "10.80"),
+        ("2024-01-16", "11.8", "12.0", "11.2", "11.5", "80000",  "920",    "12.65", "10.35"),
+        ("2024-01-17", "11.3", "11.5", "10.8", "11.0", "75000",  "825",    "12.10", "9.90"),
+        ("2024-01-18", "10.8", "11.2", "10.5", "10.8", "65000",  "702",    "11.88", "9.72"),
+        ("2024-01-19", "10.5", "10.8", "10.2", "10.5", "60000",  "630",    "11.55", "9.45"),
+        ("2024-01-22", "10.3", "10.6", "10.0", "10.2", "55000",  "561",    "11.22", "9.18"),
+        ("2024-01-23", "10.2", "10.8", "10.1", "10.5", "60000",  "630",    "11.55", "9.45"),
+        ("2024-01-24", "10.5", "10.9", "10.4", "10.7", "65000",  "695.5",  "11.77", "9.63"),
+        ("2024-01-25", "10.7", "11.0", "10.6", "10.9", "68000",  "741.2",  "11.99", "9.81"),
+    ]
+
+    stock_rows = [[r[0], "000001", *r[1:]] for r in base_prices]
+    _write_csv(snapshot_dir / "stock_daily.csv", STOCK_DAILY_FIELDS, stock_rows)
+    _write_csv(
+        snapshot_dir / "index_daily.csv",
+        INDEX_DAILY_FIELDS,
+        [["2024-01-02", "000300", "3500", "3520", "3490", "3510", "10000", "35000000"]],
+    )
+    _write_csv(
+        snapshot_dir / "industry_map.csv",
+        ["symbol", "industry_level2"],
+        [["000001", "电子"]],
+    )
+    industry_rows = []
+    all_dates = [r[0] for r in base_prices]
+    for d in all_dates:
+        industry_rows.append([d, "电子", "5000000000"])
+        industry_rows.append([d, "银行", "1000000000"])
+        industry_rows.append([d, "地产", "800000000"])
+    _write_csv(
+        snapshot_dir / "industry_daily_amount.csv",
+        ["trade_date", "industry_level2", "amount"],
+        industry_rows,
+    )
+    _write_csv(
+        snapshot_dir / "trading_calendar.csv",
+        ["trade_date", "is_open"],
+        [[d, "1"] for d in all_dates],
+    )
+
+    config = BacktestConfig(
+        name="skip-reason-test",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        initial_cash=1_000_000,
+        output_dir=tmp_path / "output",
+        data_source="a-stock-data",
+        data_snapshot=snapshot_dir.name,
+        data_dir=snapshot_dir.parent,
+    )
+
+    from suishi_north_backtest.parameters import StrategyParameters, default_mvp1_parameters
+    import dataclasses
+
+    params = dataclasses.replace(default_mvp1_parameters(), min_daily_amount=1_000_000.0)
+    data_set = run_mvp1_from_raw_snapshot(snapshot_dir, config, parameters=params)
+
+    # skipped_trades 中必须包含低流动性原因
+    universe_skips = [s for s in data_set.skipped_trades if s.get("track") == "universe_filter"]
+    assert len(universe_skips) > 0, (
+        f"skipped_trades 应有 universe_filter 审计，实际：{data_set.skipped_trades}"
+    )
+    liquidity_skips = [
+        s for s in universe_skips
+        if "流动性" in s.get("reason", "") or "成交额" in s.get("reason", "")
+    ]
+    assert len(liquidity_skips) > 0, (
+        f"应包含低流动性审计，实际 reasons: {[s.get('reason') for s in universe_skips]}"
+    )
+
+
+def test_runner_records_long_suspension_skip_reason(tmp_path: Path) -> None:
+    """runner 输出中必须包含长期停牌排除的审计原因。"""
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+
+    manifest = {
+        "data_version": "long-susp-v1",
+        "source": "long-susp-test",
+        "created_at": "2024-01-01T00:00:00+08:00",
+        "stock_daily_file": "stock_daily.csv",
+        "index_daily_file": "index_daily.csv",
+        "industry_map_file": "industry_map.csv",
+        "industry_daily_amount_file": "industry_daily_amount.csv",
+        "trading_calendar_file": "trading_calendar.csv",
+    }
+    (snapshot_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # 正常交易 + 连续停牌
+    base_prices = [
+        ("2024-01-02", "10.5", "11.0", "10.3", "10.8", "100000", "1080000", "11.88", "9.72"),
+        ("2024-01-03", "10.8", "11.2", "10.7", "11.0", "80000",  "880000",  "12.10", "9.90"),
+        ("2024-01-04", "11.0", "11.3", "10.9", "11.2", "90000",  "1008000", "12.32", "10.08"),
+        ("2024-01-05", "11.2", "11.5", "11.0", "11.3", "85000",  "960500",  "12.43", "10.17"),
+        ("2024-01-08", "11.3", "11.6", "11.1", "11.5", "88000",  "1012000", "12.65", "10.35"),
+        ("2024-01-09", "11.5", "11.8", "11.3", "11.7", "90000",  "1053000", "12.87", "10.53"),
+        ("2024-01-10", "11.7", "12.0", "11.5", "11.9", "92000",  "1094800", "13.09", "10.71"),
+        # 连续停牌 3 天
+        ("2024-01-11", "", "", "", "", "", "", "", ""),
+        ("2024-01-12", "", "", "", "", "", "", "", ""),
+        ("2024-01-15", "", "", "", "", "", "", "", ""),
+    ]
+
+    stock_rows = [[r[0], "000001", *r[1:]] for r in base_prices]
+    _write_csv(snapshot_dir / "stock_daily.csv", STOCK_DAILY_FIELDS, stock_rows)
+    _write_csv(
+        snapshot_dir / "index_daily.csv",
+        INDEX_DAILY_FIELDS,
+        [["2024-01-02", "000300", "3500", "3520", "3490", "3510", "10000", "35000000"]],
+    )
+    _write_csv(
+        snapshot_dir / "industry_map.csv",
+        ["symbol", "industry_level2"],
+        [["000001", "电子"]],
+    )
+    industry_rows = []
+    all_dates = [r[0] for r in base_prices]
+    for d in all_dates:
+        industry_rows.append([d, "电子", "5000000000"])
+        industry_rows.append([d, "银行", "1000000000"])
+    _write_csv(
+        snapshot_dir / "industry_daily_amount.csv",
+        ["trade_date", "industry_level2", "amount"],
+        industry_rows,
+    )
+    _write_csv(
+        snapshot_dir / "trading_calendar.csv",
+        ["trade_date", "is_open"],
+        [[d, "1"] for d in all_dates],
+    )
+
+    config = BacktestConfig(
+        name="long-susp-test",
+        start_date="2024-01-01",
+        end_date="2024-01-15",
+        initial_cash=1_000_000,
+        output_dir=tmp_path / "output",
+        data_source="a-stock-data",
+        data_snapshot=snapshot_dir.name,
+        data_dir=snapshot_dir.parent,
+    )
+
+    from suishi_north_backtest.parameters import StrategyParameters, default_mvp1_parameters
+    import dataclasses
+
+    params = dataclasses.replace(default_mvp1_parameters(), long_suspension_days=3)
+    data_set = run_mvp1_from_raw_snapshot(snapshot_dir, config, parameters=params)
+
+    # skipped_trades 中必须包含长期停牌原因
+    universe_skips = [s for s in data_set.skipped_trades if s.get("track") == "universe_filter"]
+    long_susp_skips = [
+        s for s in universe_skips
+        if "长期停牌" in s.get("reason", "")
+    ]
+    assert len(long_susp_skips) > 0, (
+        f"应包含长期停牌审计，实际 reasons: {[s.get('reason') for s in universe_skips]}"
+    )

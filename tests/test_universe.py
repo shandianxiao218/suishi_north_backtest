@@ -478,3 +478,38 @@ def test_long_suspension_audit_has_reason() -> None:
 
     long_audit = [a for a in audit if "长期停牌" in a.reason]
     assert len(long_audit) >= 1
+
+
+def test_long_suspension_does_not_exclude_pre_suspension_trading_days() -> None:
+    """长期停牌不得回溯排除历史正常交易日。
+
+    000001 在 2024-01-02 正常交易，随后连续停牌 3 天。
+    long_suspension_days=3 时：
+    - 2024-01-02 正常交易日仍在 universe
+    - 停牌日 2024-01-03、01-04、01-05 被排除并有"长期停牌"审计
+    """
+    stocks = [
+        # 正常交易日
+        stock(symbol="000001", trade_date="2024-01-02", amount=1_000_000),
+        # 连续停牌 3 天
+        stock(symbol="000001", trade_date="2024-01-03", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000001", trade_date="2024-01-04", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000001", trade_date="2024-01-05", is_suspended=True, open=None, close=None, amount=None),
+    ]
+    md = make_market_data(stocks)
+    universe, audit = build_universe_with_audit(md, long_suspension_days=3)
+
+    # 正常交易日仍在 universe
+    dates_in_universe = {e.trade_date for e in universe if e.symbol == "000001"}
+    assert "2024-01-02" in dates_in_universe, (
+        f"2024-01-02 正常交易日不应被排除，实际 universe dates: {dates_in_universe}"
+    )
+
+    # 停牌日不在 universe
+    assert "2024-01-03" not in dates_in_universe
+    assert "2024-01-04" not in dates_in_universe
+    assert "2024-01-05" not in dates_in_universe
+
+    # 停牌日有长期停牌审计
+    long_audit = [a for a in audit if "长期停牌" in a.reason and a.symbol == "000001"]
+    assert len(long_audit) >= 1

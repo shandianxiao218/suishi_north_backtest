@@ -60,6 +60,9 @@ def find_candidates(
     # Sort by date
     bars = sorted(bars, key=lambda b: b.trade_date)
 
+    # Remove bars with missing close (suspended)
+    bars = [b for b in bars if b.close is not None]
+
     # Group by symbol
     by_symbol: dict[str, list[StockDaily]] = {}
     for b in bars:
