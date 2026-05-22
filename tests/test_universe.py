@@ -486,7 +486,8 @@ def test_long_suspension_does_not_exclude_pre_suspension_trading_days() -> None:
     000001 在 2024-01-02 正常交易，随后连续停牌 3 天。
     long_suspension_days=3 时：
     - 2024-01-02 正常交易日仍在 universe
-    - 停牌日 2024-01-03、01-04、01-05 被排除并有"长期停牌"审计
+    - 停牌日 2024-01-03、01-04、01-05 被排除
+    - 只有 01-05（第 3 个连续停牌日）起才有"长期停牌"审计
     """
     stocks = [
         # 正常交易日
@@ -510,6 +511,54 @@ def test_long_suspension_does_not_exclude_pre_suspension_trading_days() -> None:
     assert "2024-01-04" not in dates_in_universe
     assert "2024-01-05" not in dates_in_universe
 
-    # 停牌日有长期停牌审计
+    # 01-03 和 01-04 是单日停牌审计（不是长期停牌）
+    # 01-05 是长期停牌审计（第 3 个连续停牌日）
     long_audit = [a for a in audit if "长期停牌" in a.reason and a.symbol == "000001"]
     assert len(long_audit) >= 1
+    long_audit_dates = {a.trade_date for a in long_audit}
+    assert "2024-01-05" in long_audit_dates
+    # 01-03 和 01-04 不应出现长期停牌 reason（它们是单日停牌）
+    assert "2024-01-03" not in long_audit_dates
+    assert "2024-01-04" not in long_audit_dates
+
+
+def test_long_suspension_reason_starts_only_when_threshold_reached() -> None:
+    """长期停牌 reason 只在连续停牌天数达到阈值时才出现。
+
+    long_suspension_days=3：
+    01-03 停牌（第 1 天）→ 单日停牌 reason
+    01-04 停牌（第 2 天）→ 单日停牌 reason
+    01-05 停牌（第 3 天）→ 长期停牌 reason
+    01-06 停牌（第 4 天）→ 长期停牌 reason
+    """
+    stocks = [
+        stock(symbol="000001", trade_date="2024-01-02", amount=1_000_000),
+        stock(symbol="000001", trade_date="2024-01-03", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000001", trade_date="2024-01-04", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000001", trade_date="2024-01-05", is_suspended=True, open=None, close=None, amount=None),
+        stock(symbol="000001", trade_date="2024-01-06", is_suspended=True, open=None, close=None, amount=None),
+    ]
+    md = make_market_data(stocks)
+    _, audit = build_universe_with_audit(md, long_suspension_days=3)
+
+    susp_audit = [a for a in audit if a.symbol == "000001"]
+
+    # 01-03：单日停牌（不是长期停牌）
+    day1 = [a for a in susp_audit if a.trade_date == "2024-01-03"]
+    assert len(day1) == 1
+    assert "长期停牌" not in day1[0].reason
+
+    # 01-04：单日停牌（不是长期停牌）
+    day2 = [a for a in susp_audit if a.trade_date == "2024-01-04"]
+    assert len(day2) == 1
+    assert "长期停牌" not in day2[0].reason
+
+    # 01-05：长期停牌（第 3 个连续停牌日）
+    day3 = [a for a in susp_audit if a.trade_date == "2024-01-05"]
+    assert len(day3) == 1
+    assert "长期停牌" in day3[0].reason
+
+    # 01-06：长期停牌（第 4 个连续停牌日）
+    day4 = [a for a in susp_audit if a.trade_date == "2024-01-06"]
+    assert len(day4) == 1
+    assert "长期停牌" in day4[0].reason

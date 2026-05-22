@@ -205,7 +205,7 @@ def _compute_long_suspended_from(
                     seg_start = b.trade_date
                 consecutive += 1
                 if consecutive >= long_suspension_days and symbol not in result:
-                    result[symbol] = seg_start
+                    result[symbol] = b.trade_date
             else:
                 consecutive = 0
                 seg_start = None
