@@ -7,8 +7,11 @@ from suishi_north_backtest.market_data import StockDaily
 from suishi_north_backtest.signals import (
     DEFAULT_AB_MIN_GAIN_PCT,
     DEFAULT_BC_MAX_RETRACEMENT_PCT,
+    DEFAULT_C_WINDOW_MAX,
+    DEFAULT_C_WINDOW_MIN,
     DEFAULT_SIGNAL_DISTANCE_MAX_PCT,
-    SIGNAL_RULE_VERSION,
+    _resolve_signal_parameters,
+    _scan_signal_findings_for_symbol,
 )
 
 if TYPE_CHECKING:
@@ -50,9 +53,23 @@ def audit_signal_candidates(
 ) -> list[SignalAuditRow]:
     """生成信号审计行，解释候选通过或失败原因。
 
-    审计只读取 `trade_date <= as_of` 的 bar，用于避免未来函数。首版聚焦
-    Issue #33 要求的失败原因和过滤器审计；完整 ABCD 细节后续继续深化。
+    审计只读取 `trade_date <= as_of` 的 bar，并复用 signals.py 的局部
+    A/B/C/信号窗口扫描规则，避免审计原因与候选生成逻辑分叉。
     """
+    (
+        ab_min_gain_pct,
+        bc_max_retracement_pct,
+        c_window_min,
+        c_window_max,
+        signal_distance_max_pct,
+    ) = _resolve_signal_parameters(
+        DEFAULT_AB_MIN_GAIN_PCT,
+        DEFAULT_BC_MAX_RETRACEMENT_PCT,
+        DEFAULT_C_WINDOW_MIN,
+        DEFAULT_C_WINDOW_MAX,
+        DEFAULT_SIGNAL_DISTANCE_MAX_PCT,
+        parameters,
+    )
     visible = sorted(
         [bar for bar in bars if bar.trade_date <= as_of and bar.close is not None],
         key=lambda bar: (bar.symbol, bar.trade_date),
@@ -63,84 +80,29 @@ def audit_signal_candidates(
 
     rows: list[SignalAuditRow] = []
     for symbol, symbol_bars in by_symbol.items():
-        rows.extend(_audit_symbol(symbol, symbol_bars, as_of, parameters))
+        findings = _scan_signal_findings_for_symbol(
+            bars=symbol_bars,
+            symbol=symbol,
+            ab_min_gain_pct=ab_min_gain_pct,
+            bc_max_retracement_pct=bc_max_retracement_pct,
+            c_window_min=c_window_min,
+            c_window_max=c_window_max,
+            signal_distance_max_pct=signal_distance_max_pct,
+            as_of=as_of,
+        )
+        rows.extend(
+            SignalAuditRow(
+                as_of=finding.as_of,
+                signal_rule_version=finding.signal_rule_version,
+                symbol=finding.symbol,
+                trade_date=finding.trade_date,
+                stage=finding.stage,
+                passed=finding.passed,
+                failure_reason=finding.failure_reason,
+                weekly_filter_passed=finding.weekly_filter_passed,
+                annual_filter_passed=finding.annual_filter_passed,
+                audit_note=finding.audit_note,
+            )
+            for finding in findings
+        )
     return rows
-
-
-def _audit_symbol(
-    symbol: str,
-    bars: list[StockDaily],
-    as_of: str,
-    parameters: StrategyParameters | None,
-) -> list[SignalAuditRow]:
-    if len(bars) < 5:
-        return [_fail(as_of, symbol, bars[-1].trade_date if bars else as_of, "insufficient_data", "可用日线不足，无法识别 ABC/C 点结构")]
-
-    ab_min = parameters.ab_min_gain_pct_for_signals if parameters else DEFAULT_AB_MIN_GAIN_PCT
-    bc_max = parameters.bc_max_retracement_pct_for_signals if parameters else DEFAULT_BC_MAX_RETRACEMENT_PCT
-    distance_max = parameters.signal_distance_to_c_max_pct_for_signals if parameters else DEFAULT_SIGNAL_DISTANCE_MAX_PCT
-
-    lows = sorted(bars, key=lambda bar: bar.close)
-    highs = sorted(bars, key=lambda bar: bar.close, reverse=True)
-    a_bar = lows[0]
-    b_bar = next((bar for bar in highs if bar.trade_date > a_bar.trade_date), None)
-    if b_bar is None:
-        return [_fail(as_of, symbol, bars[-1].trade_date, "a_b_structure", "未找到 A 点之后的 B 点高点")]
-
-    ab_gain_pct = (b_bar.close - a_bar.close) / a_bar.close * 100
-    if ab_gain_pct < ab_min:
-        return [_fail(as_of, symbol, b_bar.trade_date, "ab_gain", f"AB 涨幅不足：{ab_gain_pct:.2f}% < {ab_min:.2f}%")]
-
-    after_b = [bar for bar in bars if bar.trade_date > b_bar.trade_date]
-    if not after_b:
-        return [_fail(as_of, symbol, b_bar.trade_date, "c_window", "B 点后没有可见交易日用于识别 C 点")]
-    c_bar = min(after_b, key=lambda bar: bar.close)
-    ab_gain = b_bar.close - a_bar.close
-    bc_retracement_pct = (b_bar.close - c_bar.close) / ab_gain * 100 if ab_gain else 0.0
-    if bc_retracement_pct > bc_max:
-        return [_fail(as_of, symbol, c_bar.trade_date, "bc_retracement", f"BC 回撤过深：{bc_retracement_pct:.2f}% > {bc_max:.2f}%")]
-
-    after_c = [bar for bar in bars if bar.trade_date > c_bar.trade_date]
-    if not after_c:
-        return [_fail(as_of, symbol, c_bar.trade_date, "signal_window", "C 点后没有可见交易日用于确认信号")]
-    sig_bar = after_c[0]
-    distance_pct = (sig_bar.close - c_bar.close) / c_bar.close * 100
-    if distance_pct > distance_max:
-        return [_fail(as_of, symbol, sig_bar.trade_date, "distance_to_c", f"信号日距离 C 点过远：{distance_pct:.2f}% > {distance_max:.2f}%")]
-
-    weekly_passed = _weekly_filter_passed(bars, sig_bar.trade_date)
-    annual_passed = _annual_filter_passed(bars, sig_bar.trade_date)
-    if not weekly_passed:
-        return [_fail(as_of, symbol, sig_bar.trade_date, "weekly_filter", "周线方向过滤未通过（日线代理）", weekly=False, annual=annual_passed)]
-    if not annual_passed:
-        return [_fail(as_of, symbol, sig_bar.trade_date, "annual_filter", "年线弱结构过滤未通过（日线代理）", weekly=weekly_passed, annual=False)]
-
-    return [SignalAuditRow(as_of, SIGNAL_RULE_VERSION, symbol, sig_bar.trade_date, "candidate", True, "", weekly_passed, annual_passed, "候选通过全部 MVP-1 信号审计规则")]
-
-
-def _weekly_filter_passed(bars: list[StockDaily], trade_date: str) -> bool:
-    idx = next((i for i, bar in enumerate(bars) if bar.trade_date == trade_date), len(bars) - 1)
-    if idx < 5:
-        return True
-    return bars[idx].close >= bars[idx - 5].close
-
-
-def _annual_filter_passed(bars: list[StockDaily], trade_date: str) -> bool:
-    idx = next((i for i, bar in enumerate(bars) if bar.trade_date == trade_date), len(bars) - 1)
-    if idx < 20:
-        return True
-    window = bars[max(0, idx - 249) : idx + 1]
-    avg_close = sum(bar.close for bar in window) / len(window)
-    return bars[idx].close >= avg_close * 0.90
-
-
-def _fail(
-    as_of: str,
-    symbol: str,
-    trade_date: str,
-    stage: str,
-    reason: str,
-    weekly: bool = True,
-    annual: bool = True,
-) -> SignalAuditRow:
-    return SignalAuditRow(as_of, SIGNAL_RULE_VERSION, symbol, trade_date, stage, False, reason, weekly, annual, reason)

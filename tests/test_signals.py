@@ -101,12 +101,12 @@ def _offset_date(date_str: str, offset: int) -> str:
 
 
 def test_valid_abcd_generates_candidate() -> None:
-    """AB 涨幅 30%（10→13），BC 回撤约 67% of AB，C 点窗口内，应生成候选。"""
+    """AB 涨幅 30%（10→13），BC 回撤 50% of AB，C 点窗口内，应生成候选。"""
     bars = make_abcd_bars(
         a_close=10.0,
         b_close=13.0,
         c_close=11.5,
-        signal_close=11.8,
+        signal_close=12.4,
     )
 
     candidates = find_candidates(bars, as_of="2024-01-30")
@@ -183,7 +183,7 @@ def test_as_of_prevents_future_data() -> None:
         a_close=10.0,
         b_close=13.0,
         c_close=11.5,
-        signal_close=11.8,
+        signal_close=12.4,
     )
 
     # as_of 设在信号日之前，不应看到候选
@@ -201,7 +201,7 @@ def test_candidate_has_required_fields() -> None:
         a_close=10.0,
         b_close=13.0,
         c_close=11.5,
-        signal_close=11.8,
+        signal_close=12.4,
     )
 
     candidates = find_candidates(bars, as_of="2024-01-30")
@@ -218,6 +218,34 @@ def test_candidate_has_required_fields() -> None:
     assert hasattr(c, "c_price")
     assert hasattr(c, "ab_gain_pct")
     assert hasattr(c, "bc_retracement_pct")
+
+
+def test_weekly_filter_blocks_candidate() -> None:
+    bars = make_abcd_bars(
+        a_close=10.0,
+        b_close=13.0,
+        c_close=11.5,
+        signal_close=11.8,
+    )
+
+    candidates = find_candidates(bars, as_of="2024-01-30")
+
+    assert candidates == []
+
+
+def test_annual_filter_blocks_candidate() -> None:
+    prefix = [bar(_offset_date("2023-12-01", i), 30.0) for i in range(14)]
+    bars = prefix + make_abcd_bars(
+        a_close=10.0,
+        b_close=13.0,
+        c_close=11.5,
+        signal_close=12.4,
+        a_date="2023-12-20",
+    )
+
+    candidates = find_candidates(bars, as_of="2024-01-30")
+
+    assert candidates == []
 
 
 def test_empty_bars_returns_empty() -> None:
