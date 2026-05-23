@@ -14,6 +14,7 @@ from suishi_north_backtest.market_data import MarketData, StockDaily, load_marke
 from suishi_north_backtest.parameters import StrategyParameters, default_mvp1_parameters
 from suishi_north_backtest.portfolio import PortfolioAction, select_candidates
 from suishi_north_backtest.raw_data import validate_raw_snapshot
+from suishi_north_backtest.scoring import ScoringContext, score_candidate
 from suishi_north_backtest.signals import CandidateSignal, find_candidates
 from suishi_north_backtest.tracks import Track, build_mainline_map
 
@@ -113,11 +114,19 @@ def run_mvp1_from_raw_snapshot(
         find_candidates(market_data.stock_daily, as_of=as_of, parameters=parameters),
         tradable_symbols_by_date,
     )
+
+    # 构建个股最新成交额映射
+    stock_amount_by_symbol = _build_stock_amount_map(market_data.stock_daily, as_of)
+    # 构建行业候选集中度
+    industry_candidate_count = _build_industry_candidate_count(candidates, industry_by_symbol)
+
     candidate_rows = _candidate_rows(
         candidates,
         industry_by_symbol,
         mainline_status_by_key,
         mainline_rank_by_key,
+        stock_amount_by_symbol,
+        industry_candidate_count,
     )
 
     # 构建主线映射，用于双轨过滤
@@ -261,6 +270,8 @@ def _candidate_rows(
     industry_by_symbol: dict[str, str],
     mainline_status_by_key: dict[tuple[str, str], MainlineStatus],
     mainline_rank_by_key: dict[tuple[str, str], int],
+    stock_amount_by_symbol: dict[str, float],
+    industry_candidate_count: dict[str, int],
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for candidate in candidates:
@@ -269,6 +280,24 @@ def _candidate_rows(
             (candidate.signal_date, industry), MainlineStatus.NONE
         )
         rank = mainline_rank_by_key.get((candidate.signal_date, industry), 0)
+        stock_amount = stock_amount_by_symbol.get(candidate.symbol, 0.0)
+        conc_count = industry_candidate_count.get(industry, 1)
+
+        scoring_ctx = ScoringContext(
+            mainline_status=status.value if status else "none",
+            industry_rank=rank,
+            industry_amount=0.0,
+            stock_amount=stock_amount,
+            same_industry_candidate_count=conc_count,
+        )
+        total_score, breakdown = score_candidate(
+            ab_gain_pct=candidate.ab_gain_pct,
+            bc_retracement_pct=candidate.bc_retracement_pct,
+            distance_to_c_pct=candidate.distance_to_c_pct,
+            weekly_filter_passed=candidate.weekly_filter_passed,
+            annual_filter_passed=candidate.annual_filter_passed,
+            context=scoring_ctx,
+        )
         rows.append(
             {
                 "signal_date": candidate.signal_date,
@@ -290,22 +319,41 @@ def _candidate_rows(
                 "failure_reason": candidate.failure_reason,
                 "as_of": candidate.as_of or candidate.signal_date,
                 "signal_rule_version": candidate.signal_rule_version,
-                "score": f"{_candidate_score(candidate, status, rank):.2f}",
+                "score": f"{total_score:.2f}",
+                "score_breakdown": breakdown.to_csv_string(),
                 "audit_note": candidate.audit_note,
             }
         )
     return rows
 
 
-def _candidate_score(
-    candidate: CandidateSignal,
-    status: MainlineStatus,
-    rank: int,
-) -> float:
-    mainline_bonus = 20.0 if status == MainlineStatus.STRONG else 0.0
-    rank_bonus = max(0.0, 6.0 - float(rank)) if rank else 0.0
-    distance_penalty = candidate.distance_to_c_pct
-    return candidate.ab_gain_pct + mainline_bonus + rank_bonus - distance_penalty
+def _build_stock_amount_map(
+    stock_daily: list[StockDaily], as_of: str | None = None
+) -> dict[str, float]:
+    """构建每只股票最新成交额映射。"""
+    bars = [b for b in stock_daily if b.amount is not None]
+    if as_of:
+        bars = [b for b in bars if b.trade_date <= as_of]
+    by_symbol: dict[str, list[StockDaily]] = {}
+    for b in bars:
+        by_symbol.setdefault(b.symbol, []).append(b)
+    result: dict[str, float] = {}
+    for symbol, symbol_bars in by_symbol.items():
+        symbol_bars.sort(key=lambda b: b.trade_date)
+        result[symbol] = float(symbol_bars[-1].amount or 0.0)
+    return result
+
+
+def _build_industry_candidate_count(
+    candidates: list[CandidateSignal],
+    industry_by_symbol: dict[str, str],
+) -> dict[str, int]:
+    """构建每个二级行业的候选数量映射。"""
+    counts: dict[str, int] = {}
+    for c in candidates:
+        industry = industry_by_symbol.get(c.symbol, "")
+        counts[industry] = counts.get(industry, 0) + 1
+    return counts
 
 
 def _simulate_portfolio_for_track(

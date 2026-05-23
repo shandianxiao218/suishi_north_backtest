@@ -169,7 +169,7 @@ def create_snapshot(root: Path, name: str) -> Path:
          "a_date", "a_price", "b_date", "b_price", "c_date", "c_price",
          "ab_gain_pct", "bc_retracement_pct", "distance_to_c_low_pct",
          "weekly_filter_passed", "annual_filter_passed", "failure_reason", "as_of",
-         "signal_rule_version", "score", "audit_note"],
+         "signal_rule_version", "score", "score_breakdown", "audit_note"],
         [{"signal_date": "2024-01-02", "track": "mainline_filtered", "symbol": "000001.SZ",
           "industry_level2": "test_industry", "is_strong_mainline": "true",
           "a_date": "2023-12-20", "a_price": "8.0", "b_date": "2023-12-28", "b_price": "10.0",
@@ -178,7 +178,7 @@ def create_snapshot(root: Path, name: str) -> Path:
           "weekly_filter_passed": "true", "annual_filter_passed": "true",
           "failure_reason": "", "as_of": "2024-01-02",
           "signal_rule_version": "MVP1-SIGNAL-AUDIT-v1",
-          "score": "85.0", "audit_note": "test"}],
+          "score": "85.0", "score_breakdown": "mainline=20.0; total=85.0", "audit_note": "test"}],
     )
     write_csv(
         snapshot_dir / "holdings.csv",

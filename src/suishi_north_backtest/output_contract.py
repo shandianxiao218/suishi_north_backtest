@@ -90,6 +90,7 @@ def mvp1_csv_specs() -> list[CsvOutputSpec]:
                 "as_of",
                 "signal_rule_version",
                 "score",
+                "score_breakdown",
                 "audit_note",
             ],
         ),

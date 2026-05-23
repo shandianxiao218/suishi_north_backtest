@@ -103,6 +103,7 @@ class TestEngineOutputsMatchOutputContract:
         assert "as_of" in spec.required_columns
         assert "signal_rule_version" in spec.required_columns
         assert "score" in spec.required_columns
+        assert "score_breakdown" in spec.required_columns
         assert "audit_note" in spec.required_columns
 
     def test_holdings_columns_match(self):

@@ -269,6 +269,8 @@ def test_candidate_rows_use_signal_audit_fields() -> None:
         industry_by_symbol={"000001": "电子"},
         mainline_status_by_key={("2024-01-24", "电子"): MainlineStatus.STRONG},
         mainline_rank_by_key={("2024-01-24", "电子"): 1},
+        stock_amount_by_symbol={"000001": 5_0000_0000.0},
+        industry_candidate_count={"电子": 1},
     )
 
     assert rows[0]["weekly_filter_passed"] == "false"
@@ -277,6 +279,9 @@ def test_candidate_rows_use_signal_audit_fields() -> None:
     assert rows[0]["as_of"] == "2024-02-20"
     assert rows[0]["signal_rule_version"] == SIGNAL_RULE_VERSION
     assert rows[0]["audit_note"] == "来自 CandidateSignal 的审计说明"
+    assert "score_breakdown" in rows[0]
+    assert "mainline=" in str(rows[0]["score_breakdown"])
+    assert float(rows[0]["score"]) > 0
 
 
 def test_run_mvp1_from_raw_snapshot_outputs_skip_audit_when_no_candidate(
