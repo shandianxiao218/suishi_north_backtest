@@ -215,3 +215,56 @@ def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> 
 
 def write_json(path: Path, value: dict[str, object]) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+
+
+def test_fixture_candidate_score_matches_score_breakdown_total() -> None:
+    """fixture 中 score 必须等于 score_breakdown 的 total。"""
+    config = BacktestConfig(name="score-consistency-test", data_source="fixture")
+    data_set = FixtureDataProvider().load(config)
+
+    for candidate in data_set.candidates:
+        score = float(candidate["score"])
+        breakdown_str = str(candidate.get("score_breakdown", ""))
+        assert breakdown_str, f"候选 {candidate['symbol']} 缺少 score_breakdown"
+
+        # 解析 score_breakdown 中的 total
+        for part in breakdown_str.split("; "):
+            k, v = part.strip().split("=")
+            if k == "total":
+                breakdown_total = float(v)
+                break
+        else:
+            pytest.fail(f"score_breakdown 缺少 total 字段：{breakdown_str}")
+
+        assert abs(score - breakdown_total) < 0.15, (
+            f"score={score} != score_breakdown.total={breakdown_total}，"
+            f"差值={abs(score - breakdown_total):.4f}"
+        )
+
+
+def test_snapshot_candidate_score_matches_score_breakdown_total(tmp_path: Path) -> None:
+    """snapshot 数据中 score 必须等于 score_breakdown 的 total。"""
+    snapshot_dir = create_snapshot(tmp_path, "snap-score-test")
+    config = BacktestConfig(
+        data_source="a-stock-data",
+        data_snapshot="snap-score-test",
+        data_dir=tmp_path,
+    )
+    data_set = AStockDataProvider().load(config)
+
+    for candidate in data_set.candidates:
+        score = float(candidate["score"])
+        breakdown_str = str(candidate.get("score_breakdown", ""))
+        if not breakdown_str:
+            continue
+        for part in breakdown_str.split("; "):
+            k, v = part.strip().split("=")
+            if k == "total":
+                breakdown_total = float(v)
+                break
+        else:
+            continue
+
+        assert abs(score - breakdown_total) < 0.15, (
+            f"score={score} != score_breakdown.total={breakdown_total}"
+        )

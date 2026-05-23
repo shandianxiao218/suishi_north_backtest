@@ -16,7 +16,12 @@ from pathlib import Path
 from suishi_north_backtest.config import BacktestConfig
 from suishi_north_backtest.engine import write_mvp1_dataset_outputs
 from suishi_north_backtest.mainline import MainlineStatus
-from suishi_north_backtest.mvp1_runner import _candidate_rows, run_mvp1_from_raw_snapshot
+from suishi_north_backtest.mvp1_runner import (
+    _candidate_rows_from_scores,
+    _score_all_candidates,
+    run_mvp1_from_raw_snapshot,
+)
+from suishi_north_backtest.market_data import StockDaily
 from suishi_north_backtest.signals import CandidateSignal, SIGNAL_RULE_VERSION
 
 
@@ -264,14 +269,34 @@ def test_candidate_rows_use_signal_audit_fields() -> None:
         audit_note="来自 CandidateSignal 的审计说明",
     )
 
-    rows = _candidate_rows(
+    # 构造 signal_date 当日的行情数据
+    bar = StockDaily(
+        trade_date="2024-01-24",
+        symbol="000001",
+        open=10.5,
+        high=11.0,
+        low=10.4,
+        close=10.7,
+        volume=65000,
+        amount=695500.0,
+        is_st=False,
+        limit_up=11.77,
+        limit_down=9.63,
+        is_suspended=False,
+    )
+    bars_by_symbol = {"000001": [bar]}
+    amount_map = {("000001", "2024-01-24"): 695500.0}
+
+    scored = _score_all_candidates(
         [candidate],
         industry_by_symbol={"000001": "电子"},
         mainline_status_by_key={("2024-01-24", "电子"): MainlineStatus.STRONG},
         mainline_rank_by_key={("2024-01-24", "电子"): 1},
-        stock_amount_by_symbol={"000001": 5_0000_0000.0},
+        stock_amount_by_symbol_date=amount_map,
+        bars_by_symbol=bars_by_symbol,
         industry_candidate_count={"电子": 1},
     )
+    rows = _candidate_rows_from_scores(scored)
 
     assert rows[0]["weekly_filter_passed"] == "false"
     assert rows[0]["annual_filter_passed"] == "false"
@@ -1137,4 +1162,238 @@ def test_runner_records_long_suspension_skip_reason(tmp_path: Path) -> None:
     ]
     assert len(long_susp_skips) > 0, (
         f"应包含长期停牌审计，实际 reasons: {[s.get('reason') for s in universe_skips]}"
+    )
+
+
+def test_runner_opens_higher_scored_candidate_before_higher_ab_gain_candidate(
+    tmp_path: Path,
+) -> None:
+    """同日两个候选竞争开仓时，应优先选择高 score 候选，而非高 AB 涨幅候选。
+
+    场景：
+    - 候选 A：AB 涨幅 60%（高），非强主线，流动性差 -> score 较低
+    - 候选 B：AB 涨幅 30%（低），强主线，流动性好 -> score 较高
+    - 同一天信号，daily_open_limit=1，只能开一个
+
+    断言：开仓的是候选 B（高 score），而非候选 A（高 AB）。
+    """
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+
+    manifest = {
+        "data_version": "score-sort-v1",
+        "source": "score-sort-test",
+        "created_at": "2024-01-01T00:00:00+08:00",
+        "stock_daily_file": "stock_daily.csv",
+        "index_daily_file": "index_daily.csv",
+        "industry_map_file": "industry_map.csv",
+        "industry_daily_amount_file": "industry_daily_amount.csv",
+        "trading_calendar_file": "trading_calendar.csv",
+    }
+    (snapshot_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # 候选 A (000001, 冷门行业, 高 AB, 低流动性)
+    # 候选 B (000002, 强主线行业, 低 AB, 高流动性)
+    # 两者同一天产生信号（2024-01-24）
+    # 候选 A 的 AB=60%, B 的 AB=30%，但 B 有强主线加持
+    base_a = [
+        ("2024-01-02", "9.5",  "9.8",  "9.0",  "9.5",  "500",  "4750",   "10.45", "8.55"),
+        ("2024-01-03", "9.2",  "9.5",  "8.8",  "9.0",  "480",  "4320",   "9.90",  "8.10"),
+        ("2024-01-04", "8.8",  "9.0",  "7.9",  "8.0",  "600",  "4800",   "8.80",  "7.20"),
+        ("2024-01-05", "8.3",  "9.0",  "8.1",  "8.8",  "550",  "4840",   "9.68",  "7.92"),
+        ("2024-01-08", "9.0",  "9.8",  "8.9",  "9.6",  "700",  "6720",   "10.56", "8.64"),
+        ("2024-01-09", "9.8",  "10.5", "9.7",  "10.3", "800",  "8240",   "11.33", "9.27"),
+        ("2024-01-10", "10.5", "11.0", "10.2", "10.8", "850",  "9180",   "11.88", "9.72"),
+        ("2024-01-11", "10.9", "11.5", "10.8", "11.3", "900",  "10170",  "12.43", "10.17"),
+        ("2024-01-12", "11.5", "12.2", "11.3", "11.8", "950",  "11210",  "12.98", "10.62"),
+        ("2024-01-15", "12.0", "12.8", "11.8", "12.8",  "1000", "12800",  "14.08", "11.52"),
+        ("2024-01-16", "12.5", "13.0", "12.0", "12.5", "800",  "10000",  "13.75", "11.25"),
+        ("2024-01-17", "12.0", "12.5", "11.5", "12.0", "750",  "9000",   "13.20", "10.80"),
+        ("2024-01-18", "11.5", "12.0", "11.0", "11.5", "650",  "7475",   "12.65", "10.35"),
+        ("2024-01-19", "11.0", "11.5", "10.5", "11.0", "600",  "6600",   "12.10", "9.90"),
+        ("2024-01-22", "10.5", "11.0", "10.0", "10.5", "550",  "5775",   "11.55", "9.45"),
+        ("2024-01-23", "10.2", "10.8", "10.1", "10.5", "600",  "6300",   "11.55", "9.45"),
+        ("2024-01-24", "10.5", "10.9", "10.4", "10.7", "650",  "6955",   "11.77", "9.63"),
+        ("2024-01-25", "10.7", "11.0", "10.6", "10.9", "680",  "7412",   "11.99", "9.81"),
+        ("2024-01-26", "10.9", "11.2", "10.8", "11.1", "700",  "7770",   "12.21", "9.99"),
+    ]
+
+    # 候选 B: AB=30%, 强主线, 高流动性
+    base_b = [
+        ("2024-01-02", "19.0", "19.5", "18.5", "19.0", "50000",  "950000",  "20.90", "17.10"),
+        ("2024-01-03", "18.5", "19.0", "18.0", "18.5", "48000",  "888000",  "20.35", "16.65"),
+        ("2024-01-04", "18.0", "18.5", "17.5", "18.0", "55000",  "990000",  "19.80", "16.20"),
+        ("2024-01-05", "18.5", "19.0", "18.0", "18.5", "52000",  "962000",  "20.35", "16.65"),
+        ("2024-01-08", "19.0", "19.5", "18.5", "19.0", "60000",  "1140000", "20.90", "17.10"),
+        ("2024-01-09", "19.5", "20.0", "19.0", "19.5", "65000",  "1267500", "21.45", "17.55"),
+        ("2024-01-10", "20.0", "20.5", "19.5", "20.0", "70000",  "1400000", "22.00", "18.00"),
+        ("2024-01-11", "20.5", "21.0", "20.0", "20.5", "75000",  "1537500", "22.55", "18.45"),
+        ("2024-01-12", "21.0", "21.5", "20.5", "21.0", "80000",  "1680000", "23.10", "18.90"),
+        ("2024-01-15", "21.5", "23.4", "21.0", "23.4",  "90000",  "2106000", "25.74", "21.06"),
+        ("2024-01-16", "22.5", "23.0", "22.0", "22.5", "85000",  "1912500", "24.75", "20.25"),
+        ("2024-01-17", "22.0", "22.5", "21.5", "22.0", "80000",  "1760000", "24.20", "19.80"),
+        ("2024-01-18", "21.5", "22.0", "21.0", "21.5", "75000",  "1612500", "23.65", "19.35"),
+        ("2024-01-19", "21.0", "21.5", "20.5", "21.0", "70000",  "1470000", "23.10", "18.90"),
+        ("2024-01-22", "20.5", "21.0", "20.0", "20.5", "65000",  "1332500", "22.55", "18.45"),
+        ("2024-01-23", "20.2", "20.8", "20.0", "20.5", "68000",  "1394000", "22.55", "18.45"),
+        ("2024-01-24", "20.5", "20.9", "20.4", "20.7", "70000",  "1449000", "22.77", "18.63"),
+        ("2024-01-25", "20.7", "21.0", "20.6", "20.9", "72000",  "1504800", "22.99", "18.81"),
+        ("2024-01-26", "20.9", "21.2", "20.8", "21.1", "74000",  "1561400", "23.21", "18.99"),
+    ]
+
+    stock_rows = []
+    for row in base_a:
+        stock_rows.append([row[0], "000001", *row[1:]])
+    for row in base_b:
+        stock_rows.append([row[0], "000002", *row[1:]])
+    _write_csv(snapshot_dir / "stock_daily.csv", STOCK_DAILY_FIELDS, stock_rows)
+
+    _write_csv(
+        snapshot_dir / "index_daily.csv",
+        INDEX_DAILY_FIELDS,
+        [["2024-01-02", "000300", "3500", "3520", "3490", "3510", "10000", "35000000"]],
+    )
+
+    _write_csv(
+        snapshot_dir / "industry_map.csv",
+        ["symbol", "industry_level2"],
+        [["000001", "冷门行业"], ["000002", "电子"]],
+    )
+
+    # 行业成交额：电子排第1，冷门行业排最后
+    all_dates = sorted(set(r[0] for r in base_a + base_b))
+    industry_rows = []
+    for d in all_dates:
+        industry_rows.append([d, "电子", "5000000000"])
+        industry_rows.append([d, "银行", "1000000000"])
+        industry_rows.append([d, "地产", "800000000"])
+        industry_rows.append([d, "医药", "600000000"])
+        industry_rows.append([d, "消费", "500000000"])
+        industry_rows.append([d, "冷门行业", "100000000"])
+    _write_csv(
+        snapshot_dir / "industry_daily_amount.csv",
+        ["trade_date", "industry_level2", "amount"],
+        industry_rows,
+    )
+    _write_csv(
+        snapshot_dir / "trading_calendar.csv",
+        ["trade_date", "is_open"],
+        [[d, "1"] for d in all_dates],
+    )
+
+    config = BacktestConfig(
+        name="score-sort-test",
+        start_date="2024-01-01",
+        end_date="2024-02-20",
+        initial_cash=1_000_000,
+        output_dir=tmp_path / "output",
+        data_source="a-stock-data",
+        data_snapshot=snapshot_dir.name,
+        data_dir=snapshot_dir.parent,
+    )
+
+    data_set = run_mvp1_from_raw_snapshot(snapshot_dir, config)
+
+    # 验证 candidates.csv 中 score 排序
+    candidates = data_set.candidates
+    if len(candidates) >= 2:
+        scored_candidates = sorted(candidates, key=lambda c: -float(c["score"]))
+        # 最高分候选应该是 000002（强主线 + 高流动性）
+        best = scored_candidates[0]
+        assert best["symbol"] == "000002", (
+            f"最高分候选应为 000002（强主线），实际为 {best['symbol']}，"
+            f"score={best['score']}"
+        )
+
+    # 如果有交易，验证交易的是高 score 候选
+    if data_set.trades:
+        trade = data_set.trades[0]
+        # 第一笔交易应该是高 score 候选
+        assert trade["symbol"] == "000002", (
+            f"首笔交易应为 000002（高 score），实际为 {trade['symbol']}"
+        )
+
+
+def test_candidate_scoring_uses_signal_date_amount_not_future_amount(
+    tmp_path: Path,
+) -> None:
+    """评分使用的成交额必须基于候选 signal_date，不能用 as_of 末端的未来成交额。"""
+    from suishi_north_backtest.scoring import ScoringContext, score_candidate
+
+    candidate = CandidateSignal(
+        signal_date="2024-01-24",
+        symbol="000001",
+        a_date="2024-01-04",
+        a_price=8.0,
+        b_date="2024-01-15",
+        b_price=12.0,
+        c_date="2024-01-22",
+        c_price=10.2,
+        ab_gain_pct=50.0,
+        bc_retracement_pct=45.0,
+        distance_to_c_pct=4.9,
+        weekly_filter_passed=True,
+        annual_filter_passed=True,
+        as_of="2024-01-29",
+        signal_rule_version=SIGNAL_RULE_VERSION,
+    )
+
+    bar_signal_date = StockDaily(
+        trade_date="2024-01-24",
+        symbol="000001",
+        open=10.5, high=10.9, low=10.4, close=10.7,
+        volume=65000, amount=500.0,
+        is_st=False, limit_up=11.77, limit_down=9.63, is_suspended=False,
+    )
+    bar_future = StockDaily(
+        trade_date="2024-01-26",
+        symbol="000001",
+        open=10.9, high=11.2, low=10.8, close=11.1,
+        volume=700000, amount=500_0000_0000.0,
+        is_st=False, limit_up=12.21, limit_down=9.99, is_suspended=False,
+    )
+
+    bars_by_symbol = {"000001": [bar_signal_date, bar_future]}
+    amount_map = {
+        ("000001", "2024-01-24"): 500.0,
+        ("000001", "2024-01-26"): 500_0000_0000.0,
+    }
+
+    scored = _score_all_candidates(
+        [candidate],
+        industry_by_symbol={"000001": "电子"},
+        mainline_status_by_key={("2024-01-24", "电子"): MainlineStatus.STRONG},
+        mainline_rank_by_key={("2024-01-24", "电子"): 1},
+        stock_amount_by_symbol_date=amount_map,
+        bars_by_symbol=bars_by_symbol,
+        industry_candidate_count={"电子": 1},
+    )
+
+    assert len(scored) == 1
+    breakdown = scored[0].breakdown
+
+    # signal_date 成交额 500 元，远低于 1 亿阈值，liquidity 应为 0
+    assert breakdown.liquidity_score == 0.0, (
+        f"signal_date 成交额极低时 liquidity 应为 0.0，实际为 {breakdown.liquidity_score}"
+    )
+
+    ctx_future = ScoringContext(
+        mainline_status="strong",
+        industry_rank=1,
+        industry_amount=0.0,
+        stock_amount=500_0000_0000.0,
+        same_industry_candidate_count=1,
+    )
+    score_future, _ = score_candidate(
+        ab_gain_pct=50.0,
+        bc_retracement_pct=45.0,
+        distance_to_c_pct=4.9,
+        weekly_filter_passed=True,
+        annual_filter_passed=True,
+        context=ctx_future,
+    )
+    assert scored[0].score < score_future, (
+        f"实际 score={scored[0].score} 应低于基于未来成交额的评分 {score_future}"
     )

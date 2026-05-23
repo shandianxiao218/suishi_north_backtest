@@ -14,7 +14,7 @@ from suishi_north_backtest.market_data import MarketData, StockDaily, load_marke
 from suishi_north_backtest.parameters import StrategyParameters, default_mvp1_parameters
 from suishi_north_backtest.portfolio import PortfolioAction, select_candidates
 from suishi_north_backtest.raw_data import validate_raw_snapshot
-from suishi_north_backtest.scoring import ScoringContext, score_candidate
+from suishi_north_backtest.scoring import ScoringContext, ScoreBreakdown, score_candidate
 from suishi_north_backtest.signals import CandidateSignal, find_candidates
 from suishi_north_backtest.tracks import Track, build_mainline_map
 
@@ -115,19 +115,24 @@ def run_mvp1_from_raw_snapshot(
         tradable_symbols_by_date,
     )
 
-    # 构建个股最新成交额映射
-    stock_amount_by_symbol = _build_stock_amount_map(market_data.stock_daily, as_of)
+    # 构建 (symbol, trade_date) -> amount 映射，避免未来函数
+    stock_amount_by_symbol_date = _build_stock_amount_by_symbol_date(market_data.stock_daily)
+    bars_by_symbol_for_lookup = _bars_by_symbol(market_data.stock_daily)
     # 构建行业候选集中度
     industry_candidate_count = _build_industry_candidate_count(candidates, industry_by_symbol)
 
-    candidate_rows = _candidate_rows(
+    # 预计算每个候选的评分，用于排序和输出
+    candidate_scores = _score_all_candidates(
         candidates,
         industry_by_symbol,
         mainline_status_by_key,
         mainline_rank_by_key,
-        stock_amount_by_symbol,
+        stock_amount_by_symbol_date,
+        bars_by_symbol_for_lookup,
         industry_candidate_count,
     )
+
+    candidate_rows = _candidate_rows_from_scores(candidate_scores)
 
     # 构建主线映射，用于双轨过滤
     mainline_entries = compute_mainlines(market_data.industry_daily_amount, as_of=as_of, parameters=parameters)
@@ -141,7 +146,7 @@ def run_mvp1_from_raw_snapshot(
 
     for track_name in ["pure_structure", "mainline_filtered"]:
         trades, holdings, skipped_rows, equity_points = _simulate_portfolio_for_track(
-            candidates=candidates,
+            candidate_scores=candidate_scores,
             market_data=market_data,
             config=config,
             parameters=parameters,
@@ -265,22 +270,38 @@ def _filter_candidates(
     ]
 
 
-def _candidate_rows(
+@dataclass(frozen=True)
+class _CandidateScore:
+    candidate: CandidateSignal
+    score: float
+    breakdown: "ScoreBreakdown"
+    industry: str
+    mainline_status: MainlineStatus
+
+
+def _score_all_candidates(
     candidates: list[CandidateSignal],
     industry_by_symbol: dict[str, str],
     mainline_status_by_key: dict[tuple[str, str], MainlineStatus],
     mainline_rank_by_key: dict[tuple[str, str], int],
-    stock_amount_by_symbol: dict[str, float],
+    stock_amount_by_symbol_date: dict[tuple[str, str], float],
+    bars_by_symbol: dict[str, list[StockDaily]],
     industry_candidate_count: dict[str, int],
-) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
+) -> list[_CandidateScore]:
+    """为所有候选计算评分，返回带评分信息的列表。"""
+    results: list[_CandidateScore] = []
     for candidate in candidates:
         industry = industry_by_symbol.get(candidate.symbol, "")
         status = mainline_status_by_key.get(
             (candidate.signal_date, industry), MainlineStatus.NONE
         )
         rank = mainline_rank_by_key.get((candidate.signal_date, industry), 0)
-        stock_amount = stock_amount_by_symbol.get(candidate.symbol, 0.0)
+        stock_amount = _lookup_amount_on_or_before(
+            stock_amount_by_symbol_date,
+            candidate.symbol,
+            candidate.signal_date,
+            bars_by_symbol,
+        )
         conc_count = industry_candidate_count.get(industry, 1)
 
         scoring_ctx = ScoringContext(
@@ -298,50 +319,87 @@ def _candidate_rows(
             annual_filter_passed=candidate.annual_filter_passed,
             context=scoring_ctx,
         )
+        results.append(_CandidateScore(
+            candidate=candidate,
+            score=total_score,
+            breakdown=breakdown,
+            industry=industry,
+            mainline_status=status,
+        ))
+    return results
+
+
+def _candidate_rows_from_scores(
+    scored: list[_CandidateScore],
+) -> list[dict[str, object]]:
+    """从评分结果生成 candidates.csv 行。"""
+    rows: list[dict[str, object]] = []
+    for s in scored:
+        c = s.candidate
         rows.append(
             {
-                "signal_date": candidate.signal_date,
-                "track": "mainline_filtered" if status == MainlineStatus.STRONG else "pure_structure",
-                "symbol": candidate.symbol,
-                "industry_level2": industry,
-                "is_strong_mainline": str(status == MainlineStatus.STRONG).lower(),
-                "a_date": candidate.a_date,
-                "a_price": f"{candidate.a_price:.4f}",
-                "b_date": candidate.b_date,
-                "b_price": f"{candidate.b_price:.4f}",
-                "c_date": candidate.c_date,
-                "c_price": f"{candidate.c_price:.4f}",
-                "ab_gain_pct": f"{candidate.ab_gain_pct:.2f}",
-                "bc_retracement_pct": f"{candidate.bc_retracement_pct:.2f}",
-                "distance_to_c_low_pct": f"{candidate.distance_to_c_pct:.2f}",
-                "weekly_filter_passed": str(candidate.weekly_filter_passed).lower(),
-                "annual_filter_passed": str(candidate.annual_filter_passed).lower(),
-                "failure_reason": candidate.failure_reason,
-                "as_of": candidate.as_of or candidate.signal_date,
-                "signal_rule_version": candidate.signal_rule_version,
-                "score": f"{total_score:.2f}",
-                "score_breakdown": breakdown.to_csv_string(),
-                "audit_note": candidate.audit_note,
+                "signal_date": c.signal_date,
+                "track": "mainline_filtered" if s.mainline_status == MainlineStatus.STRONG else "pure_structure",
+                "symbol": c.symbol,
+                "industry_level2": s.industry,
+                "is_strong_mainline": str(s.mainline_status == MainlineStatus.STRONG).lower(),
+                "a_date": c.a_date,
+                "a_price": f"{c.a_price:.4f}",
+                "b_date": c.b_date,
+                "b_price": f"{c.b_price:.4f}",
+                "c_date": c.c_date,
+                "c_price": f"{c.c_price:.4f}",
+                "ab_gain_pct": f"{c.ab_gain_pct:.2f}",
+                "bc_retracement_pct": f"{c.bc_retracement_pct:.2f}",
+                "distance_to_c_low_pct": f"{c.distance_to_c_pct:.2f}",
+                "weekly_filter_passed": str(c.weekly_filter_passed).lower(),
+                "annual_filter_passed": str(c.annual_filter_passed).lower(),
+                "failure_reason": c.failure_reason,
+                "as_of": c.as_of or c.signal_date,
+                "signal_rule_version": c.signal_rule_version,
+                "score": f"{s.score:.2f}",
+                "score_breakdown": s.breakdown.to_csv_string(),
+                "audit_note": c.audit_note,
             }
         )
     return rows
 
 
-def _build_stock_amount_map(
-    stock_daily: list[StockDaily], as_of: str | None = None
-) -> dict[str, float]:
-    """构建每只股票最新成交额映射。"""
-    bars = [b for b in stock_daily if b.amount is not None]
-    if as_of:
-        bars = [b for b in bars if b.trade_date <= as_of]
-    by_symbol: dict[str, list[StockDaily]] = {}
-    for b in bars:
-        by_symbol.setdefault(b.symbol, []).append(b)
-    result: dict[str, float] = {}
-    for symbol, symbol_bars in by_symbol.items():
-        symbol_bars.sort(key=lambda b: b.trade_date)
-        result[symbol] = float(symbol_bars[-1].amount or 0.0)
+def _build_stock_amount_by_symbol_date(
+    stock_daily: list[StockDaily],
+) -> dict[tuple[str, str], float]:
+    """构建 (symbol, trade_date) -> amount 映射。
+
+    评分时按候选 signal_date 查询当日成交额，
+    避免使用全局 as_of 末端的未来成交额。
+    """
+    result: dict[tuple[str, str], float] = {}
+    for bar in stock_daily:
+        if bar.amount is not None:
+            result[(bar.symbol, bar.trade_date)] = float(bar.amount)
     return result
+
+
+def _lookup_amount_on_or_before(
+    amount_map: dict[tuple[str, str], float],
+    symbol: str,
+    signal_date: str,
+    bars_by_symbol: dict[str, list[StockDaily]],
+) -> float:
+    """查询 signal_date 当日或之前最近一日的成交额。
+
+    如果 signal_date 当日没有行情（停牌等），向前查找最近可用值。
+    """
+    # 先尝试精确匹配
+    amt = amount_map.get((symbol, signal_date))
+    if amt is not None:
+        return amt
+    # 向前查找最近可用日
+    symbol_bars = bars_by_symbol.get(symbol, [])
+    for bar in reversed(symbol_bars):
+        if bar.trade_date <= signal_date and bar.amount is not None:
+            return float(bar.amount)
+    return 0.0
 
 
 def _build_industry_candidate_count(
@@ -357,7 +415,7 @@ def _build_industry_candidate_count(
 
 
 def _simulate_portfolio_for_track(
-    candidates: list[CandidateSignal],
+    candidate_scores: list[_CandidateScore],
     market_data: MarketData,
     config: BacktestConfig,
     parameters: StrategyParameters,
@@ -375,13 +433,14 @@ def _simulate_portfolio_for_track(
     # 按轨道类型过滤候选：pure_structure 接受所有，mainline_filtered 只接受强主线
     skipped_rows: list[dict[str, object]] = []
     if track_name == "mainline_filtered" and mainline_map and industry_by_symbol:
-        filtered_candidates = []
-        for c in candidates:
+        filtered_scores = []
+        for cs in candidate_scores:
+            c = cs.candidate
             industry = industry_by_symbol.get(c.symbol, "")
             date_data = mainline_map.get(c.signal_date, {})
             status_info = date_data.get(industry)
             if status_info and status_info[0] == MainlineStatus.STRONG:
-                filtered_candidates.append(c)
+                filtered_scores.append(cs)
             else:
                 skipped_rows.append({
                     "signal_date": c.signal_date,
@@ -390,7 +449,7 @@ def _simulate_portfolio_for_track(
                     "reason": f"非强主线（{industry}），mainline_filtered 跳过",
                 })
     else:
-        filtered_candidates = list(candidates)
+        filtered_scores = list(candidate_scores)
     trades: list[ClosedTrade] = []
     holdings: list[dict[str, object]] = []
     equity_points: list[dict[str, object]] = [
@@ -408,7 +467,8 @@ def _simulate_portfolio_for_track(
     opened_today_by_date: dict[str, int] = {}
     opened_week_by_key: dict[str, int] = {}
 
-    for candidate in sorted(filtered_candidates, key=lambda c: (c.signal_date, -c.ab_gain_pct)):
+    for cs in sorted(filtered_scores, key=lambda s: (s.candidate.signal_date, -s.score, s.candidate.symbol)):
+        candidate = cs.candidate
         week_key = candidate.signal_date[:7]
         actions = select_candidates(
             candidates=[candidate],
@@ -505,10 +565,10 @@ def _simulate_portfolio_for_track(
             }
         )
 
-    if not filtered_candidates:
+    if not filtered_scores:
         skip_reason = (
             "mainline_filtered 过滤后无候选（原始候选可能存在但非强主线）"
-            if track_name == "mainline_filtered" and candidates
+            if track_name == "mainline_filtered" and candidate_scores
             else "raw snapshot 未产生候选信号"
         )
         skipped_rows.append(
