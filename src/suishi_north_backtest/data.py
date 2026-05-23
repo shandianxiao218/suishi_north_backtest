@@ -117,7 +117,8 @@ class FixtureDataProvider:
                     "failure_reason": "",
                     "as_of": "2024-01-02",
                     "signal_rule_version": "MVP1-SIGNAL-AUDIT-v1",
-                    "score": "88.5",
+                    "score": "60.90",
+                    "score_breakdown": "mainline=20.0; industry_rank=10.0; ab_gain=5.0; bc_retracement=6.7; distance_to_c=4.8; liquidity=4.4; weekly_filter=5.0; annual_filter=5.0; concentration_penalty=0.0; total=60.9",
                     "audit_note": "deterministic fixture candidate generated with as-of date 2024-01-02",
                 }
             ],

@@ -169,7 +169,7 @@ def create_snapshot(root: Path, name: str) -> Path:
          "a_date", "a_price", "b_date", "b_price", "c_date", "c_price",
          "ab_gain_pct", "bc_retracement_pct", "distance_to_c_low_pct",
          "weekly_filter_passed", "annual_filter_passed", "failure_reason", "as_of",
-         "signal_rule_version", "score", "audit_note"],
+         "signal_rule_version", "score", "score_breakdown", "audit_note"],
         [{"signal_date": "2024-01-02", "track": "mainline_filtered", "symbol": "000001.SZ",
           "industry_level2": "test_industry", "is_strong_mainline": "true",
           "a_date": "2023-12-20", "a_price": "8.0", "b_date": "2023-12-28", "b_price": "10.0",
@@ -178,7 +178,7 @@ def create_snapshot(root: Path, name: str) -> Path:
           "weekly_filter_passed": "true", "annual_filter_passed": "true",
           "failure_reason": "", "as_of": "2024-01-02",
           "signal_rule_version": "MVP1-SIGNAL-AUDIT-v1",
-          "score": "85.0", "audit_note": "test"}],
+          "score": "85.0", "score_breakdown": "mainline=20.0; total=85.0", "audit_note": "test"}],
     )
     write_csv(
         snapshot_dir / "holdings.csv",
@@ -215,3 +215,56 @@ def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> 
 
 def write_json(path: Path, value: dict[str, object]) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+
+
+def test_fixture_candidate_score_matches_score_breakdown_total() -> None:
+    """fixture 中 score 必须等于 score_breakdown 的 total。"""
+    config = BacktestConfig(name="score-consistency-test", data_source="fixture")
+    data_set = FixtureDataProvider().load(config)
+
+    for candidate in data_set.candidates:
+        score = float(candidate["score"])
+        breakdown_str = str(candidate.get("score_breakdown", ""))
+        assert breakdown_str, f"候选 {candidate['symbol']} 缺少 score_breakdown"
+
+        # 解析 score_breakdown 中的 total
+        for part in breakdown_str.split("; "):
+            k, v = part.strip().split("=")
+            if k == "total":
+                breakdown_total = float(v)
+                break
+        else:
+            pytest.fail(f"score_breakdown 缺少 total 字段：{breakdown_str}")
+
+        assert abs(score - breakdown_total) < 0.15, (
+            f"score={score} != score_breakdown.total={breakdown_total}，"
+            f"差值={abs(score - breakdown_total):.4f}"
+        )
+
+
+def test_snapshot_candidate_score_matches_score_breakdown_total(tmp_path: Path) -> None:
+    """snapshot 数据中 score 必须等于 score_breakdown 的 total。"""
+    snapshot_dir = create_snapshot(tmp_path, "snap-score-test")
+    config = BacktestConfig(
+        data_source="a-stock-data",
+        data_snapshot="snap-score-test",
+        data_dir=tmp_path,
+    )
+    data_set = AStockDataProvider().load(config)
+
+    for candidate in data_set.candidates:
+        score = float(candidate["score"])
+        breakdown_str = str(candidate.get("score_breakdown", ""))
+        if not breakdown_str:
+            continue
+        for part in breakdown_str.split("; "):
+            k, v = part.strip().split("=")
+            if k == "total":
+                breakdown_total = float(v)
+                break
+        else:
+            continue
+
+        assert abs(score - breakdown_total) < 0.15, (
+            f"score={score} != score_breakdown.total={breakdown_total}"
+        )
