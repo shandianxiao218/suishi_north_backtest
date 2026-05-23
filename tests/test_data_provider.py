@@ -76,6 +76,8 @@ def test_a_stock_data_provider_reads_snapshot_directory(tmp_path: Path) -> None:
     assert data_set.trades[0]["symbol"] == "000001.SZ"
     assert data_set.candidates[0]["signal_date"] == "2024-01-02"
     assert data_set.candidates[0]["track"] == "mainline_filtered"
+    assert data_set.candidates[0]["as_of"] == "2024-01-02"
+    assert data_set.candidates[0]["signal_rule_version"]
     assert data_set.metrics["trade_count"] == 1
 
 
@@ -166,13 +168,16 @@ def create_snapshot(root: Path, name: str) -> Path:
         ["signal_date", "track", "symbol", "industry_level2", "is_strong_mainline",
          "a_date", "a_price", "b_date", "b_price", "c_date", "c_price",
          "ab_gain_pct", "bc_retracement_pct", "distance_to_c_low_pct",
-         "weekly_filter_passed", "annual_filter_passed", "score", "audit_note"],
+         "weekly_filter_passed", "annual_filter_passed", "failure_reason", "as_of",
+         "signal_rule_version", "score", "audit_note"],
         [{"signal_date": "2024-01-02", "track": "mainline_filtered", "symbol": "000001.SZ",
           "industry_level2": "test_industry", "is_strong_mainline": "true",
           "a_date": "2023-12-20", "a_price": "8.0", "b_date": "2023-12-28", "b_price": "10.0",
           "c_date": "2024-01-02", "c_price": "9.0", "ab_gain_pct": "25.0",
           "bc_retracement_pct": "50.0", "distance_to_c_low_pct": "3.0",
           "weekly_filter_passed": "true", "annual_filter_passed": "true",
+          "failure_reason": "", "as_of": "2024-01-02",
+          "signal_rule_version": "MVP1-SIGNAL-AUDIT-v1",
           "score": "85.0", "audit_note": "test"}],
     )
     write_csv(

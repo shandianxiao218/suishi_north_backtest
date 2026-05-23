@@ -114,6 +114,9 @@ class FixtureDataProvider:
                     "distance_to_c_low_pct": "4.17",
                     "weekly_filter_passed": "true",
                     "annual_filter_passed": "true",
+                    "failure_reason": "",
+                    "as_of": "2024-01-02",
+                    "signal_rule_version": "MVP1-SIGNAL-AUDIT-v1",
                     "score": "88.5",
                     "audit_note": "deterministic fixture candidate generated with as-of date 2024-01-02",
                 }

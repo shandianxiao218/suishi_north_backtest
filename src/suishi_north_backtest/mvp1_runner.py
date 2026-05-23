@@ -285,10 +285,13 @@ def _candidate_rows(
                 "ab_gain_pct": f"{candidate.ab_gain_pct:.2f}",
                 "bc_retracement_pct": f"{candidate.bc_retracement_pct:.2f}",
                 "distance_to_c_low_pct": f"{candidate.distance_to_c_pct:.2f}",
-                "weekly_filter_passed": "true",
-                "annual_filter_passed": "true",
+                "weekly_filter_passed": str(candidate.weekly_filter_passed).lower(),
+                "annual_filter_passed": str(candidate.annual_filter_passed).lower(),
+                "failure_reason": candidate.failure_reason,
+                "as_of": candidate.as_of or candidate.signal_date,
+                "signal_rule_version": candidate.signal_rule_version,
                 "score": f"{_candidate_score(candidate, status, rank):.2f}",
-                "audit_note": "raw snapshot candidate generated with as-of data",
+                "audit_note": candidate.audit_note,
             }
         )
     return rows
