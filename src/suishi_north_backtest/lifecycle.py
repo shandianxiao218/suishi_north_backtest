@@ -1,7 +1,7 @@
 """组合交易生命周期深模块。
 
-负责逐日遍历候选、T+1 买入、持仓管理、退出信号检测、T+1 卖出、
-停牌/一字跌停顺延、现金账本、持仓账本、skipped reason 审计。
+按交易日驱动，逐日遍历候选、T+1 买入、持仓管理、退出信号检测、T+1 卖出、
+停牌/一字跌停顺延、每日估值、现金账本、持仓账本、skipped reason 审计。
 
 mvp1_runner 负责 orchestration（数据加载、主线计算、评分、双轨调度），
 lifecycle 负责单条轨道的完整交易生命周期。
@@ -74,6 +74,8 @@ class PortfolioRunResult:
     holdings: list[dict[str, object]]
     skipped_trades: list[dict[str, object]]
     equity_curve: list[dict[str, object]]
+    cash_ledger: list[dict[str, object]] = field(default_factory=list)
+    position_ledger: list[dict[str, object]] = field(default_factory=list)
 
 
 def run_portfolio_lifecycle(
@@ -82,7 +84,13 @@ def run_portfolio_lifecycle(
     run_config: PortfolioRunConfig,
     parameters: StrategyParameters,
 ) -> PortfolioRunResult:
-    """执行单条轨道的完整交易生命周期。
+    """执行单条轨道的完整交易生命周期（逐日驱动）。
+
+    按交易日推进，每个交易日依次：
+    1. 执行待卖持仓（退出信号已触发，T+1 卖出）
+    2. 处理当日信号候选（检查组合约束，T+1 买入）
+    3. 检测持仓退出信号（基于当日 bar）
+    4. 逐日 mark-to-market
 
     Args:
         scored_candidates: 按 (signal_date, -score, symbol) 预排序的候选列表，
@@ -92,161 +100,334 @@ def run_portfolio_lifecycle(
         parameters: 策略参数。
 
     Returns:
-        PortfolioRunResult 包含 trades、holdings、skipped_trades、equity_curve。
+        PortfolioRunResult 包含 trades、holdings、skipped_trades、equity_curve、
+        cash_ledger、position_ledger。
     """
     track_name = run_config.track_name
-    skipped_rows: list[dict[str, object]] = []
-    trades: list[ClosedTrade] = []
-    holdings: list[dict[str, object]] = []
-    equity_points: list[dict[str, object]] = [
-        {
-            "date": run_config.start_date,
-            "cash": round(run_config.initial_cash, 2),
-            "equity": round(run_config.initial_cash, 2),
-            "drawdown": "0.0000",
-            "track": track_name,
-        }
-    ]
 
+    # 收集所有需要处理的日期（交易日 + 候选信号日期）
+    all_dates_set: set[str] = set()
+    for sym_bars in bars_by_symbol.values():
+        for bar in sym_bars:
+            if run_config.start_date <= bar.trade_date <= run_config.end_date:
+                all_dates_set.add(bar.trade_date)
+    for cand, _score in scored_candidates:
+        if run_config.start_date <= cand.signal_date <= run_config.end_date:
+            all_dates_set.add(cand.signal_date)
+    trading_dates = sorted(all_dates_set)
+
+    # 按信号日期索引候选
+    candidates_by_date: dict[str, list[tuple[CandidateSignal, float]]] = {}
+    for cand, score in scored_candidates:
+        candidates_by_date.setdefault(cand.signal_date, []).append((cand, score))
+
+    # ---- 状态 ----
     cash = float(run_config.initial_cash)
-    current_holdings: list[str] = []
+    current_positions: dict[str, OpenPosition] = {}
+    highest_close_map: dict[str, float] = {}
+    pending_exits: dict[str, tuple[str, str]] = {}  # sym -> (exit_signal_date, exit_reason_str)
+
+    # ---- 结果容器 ----
+    trades: list[ClosedTrade] = []
+    holdings_list: list[dict[str, object]] = []
+    skipped_rows: list[dict[str, object]] = []
+    equity_points: list[dict[str, object]] = []
+    cash_ledger: list[dict[str, object]] = []
+    position_ledger: list[dict[str, object]] = []
+
     opened_today_by_date: dict[str, int] = {}
     opened_week_by_key: dict[str, int] = {}
 
-    for candidate, score in scored_candidates:
-        week_key = candidate.signal_date[:7]
-        actions = select_candidates(
-            candidates=[candidate],
-            current_holdings=current_holdings,
-            opened_today=opened_today_by_date.get(candidate.signal_date, 0),
-            opened_this_week=opened_week_by_key.get(week_key, 0),
-            parameters=parameters,
-        )
-        open_action = _first_open_action(actions)
-        if open_action is None:
-            skipped_rows.extend(_skip_rows_from_actions(actions, track_name))
-            continue
+    # 初始状态
+    cash_ledger.append({
+        "event": "initial_cash",
+        "date": run_config.start_date,
+        "amount": round(cash, 2),
+        "track": track_name,
+    })
+    equity_points.append({
+        "date": run_config.start_date,
+        "cash": round(cash, 2),
+        "equity": round(cash, 2),
+        "drawdown": "0.0000",
+        "track": track_name,
+    })
 
-        entry_bar = _next_bar_after(bars_by_symbol.get(candidate.symbol, []), candidate.signal_date)
-        if entry_bar is None:
-            skipped_rows.append(_skip_row(candidate, "缺少 T+1 买入行情，无法成交", track_name))
-            continue
+    for date in trading_dates:
 
-        buy = execute_buy(
-            candidate=candidate,
-            open_price=entry_bar.open,
-            cash=cash,
-            equity=float(equity_points[-1]["equity"]),
-            high=entry_bar.high,
-            low=entry_bar.low,
-            close=entry_bar.close,
-            limit_up=entry_bar.limit_up,
-            parameters=parameters,
-        )
-        if not buy.executed:
-            skipped_rows.append(_skip_row(candidate, buy.skip_reason, track_name))
-            continue
+        # ================================================================
+        # Phase 1: 执行待卖持仓（退出信号在先前日期已触发，今日尝试卖出）
+        # ================================================================
+        sold_symbols: list[str] = []
+        for sym, (exit_signal_date, exit_reason_str) in list(pending_exits.items()):
+            if date <= exit_signal_date:
+                continue
+            pos = current_positions.get(sym)
+            if pos is None:
+                del pending_exits[sym]
+                continue
+            bar = _get_bar_on_date(bars_by_symbol.get(sym, []), date)
+            if bar is None:
+                continue
+            sell = execute_sell(
+                symbol=sym,
+                open_price=bar.open,
+                shares=pos.shares,
+                high=bar.high,
+                low=bar.low,
+                close=bar.close,
+                limit_down=bar.limit_down,
+                is_suspended=bar.is_suspended,
+                parameters=parameters,
+            )
+            if not sell.executed:
+                continue
 
-        cash = buy.cash_remaining
-        current_holdings.append(candidate.symbol)
-        opened_today_by_date[candidate.signal_date] = opened_today_by_date.get(candidate.signal_date, 0) + 1
-        opened_week_by_key[week_key] = opened_week_by_key.get(week_key, 0) + 1
-
-        position = OpenPosition(
-            symbol=candidate.symbol,
-            shares=buy.shares,
-            entry_signal_date=candidate.signal_date,
-            entry_date=entry_bar.trade_date,
-            entry_price=float(buy.entry_price or 0.0),
-            c_price=candidate.c_price,
-            cash_after_entry=cash,
-            highest_close_since_entry=float(entry_bar.close or buy.entry_price or 0.0),
-            commission=buy.commission,
-            slippage=buy.slippage,
-        )
-
-        close_result = close_position_if_possible(
-            position=position,
-            bars=bars_by_symbol.get(candidate.symbol, []),
-            parameters=parameters,
-            track_name=track_name,
-            equity_points=equity_points,
-        )
-
-        if close_result.trade is not None:
-            trade = close_result.trade
-            cash = position.cash_after_entry + trade.sell_cash_proceeds
+            gross_pnl = (float(sell.sell_price or 0.0) - pos.entry_price) * pos.shares
+            total_cost = pos.commission + sell.commission + sell.stamp_tax
+            slippage_cost = pos.slippage + sell.slippage
+            net_pnl = gross_pnl - total_cost
+            prefix = "PURE" if track_name == "pure_structure" else "MAIN" if track_name == "mainline_filtered" else "RAW"
+            trade = ClosedTrade(
+                trade_id=f"{prefix}-{sym}-{pos.entry_date}-{bar.trade_date}",
+                symbol=sym,
+                entry_signal_date=pos.entry_signal_date,
+                entry_date=pos.entry_date,
+                entry_price=pos.entry_price,
+                entry_shares=pos.shares,
+                exit_trigger_date=exit_signal_date,
+                exit_date=bar.trade_date,
+                exit_price=float(sell.sell_price or 0.0),
+                exit_reason=exit_reason_str,
+                commission=pos.commission + sell.commission,
+                stamp_tax=sell.stamp_tax,
+                slippage_cost=slippage_cost,
+                total_cost=total_cost,
+                gross_pnl=gross_pnl,
+                net_pnl=net_pnl,
+                sell_cash_proceeds=float(sell.cash_proceeds or 0.0),
+            )
             trades.append(trade)
-            current_holdings = [s for s in current_holdings if s != candidate.symbol]
-            equity_points = close_result.equity_points
-            equity_points.append(
-                {
-                    "date": trade.exit_date,
-                    "cash": round(cash, 2),
-                    "equity": round(cash, 2),
-                    "drawdown": f"{_max_drawdown([float(p['equity']) for p in equity_points] + [cash]):.6f}",
-                    "track": track_name,
-                }
-            )
-        else:
-            holdings.append(
-                {
-                    "date": run_config.end_date,
-                    "track": track_name,
-                    "symbol": position.symbol,
-                    "shares": str(position.shares),
-                    "cost_basis": f"{position.shares * position.entry_price:.2f}",
-                    "market_value": f"{position.shares * position.entry_price:.2f}",
-                    "unrealized_pnl": "0.00",
-                    "holding_days": "0",
-                    "highest_close_since_entry": f"{position.highest_close_since_entry:.4f}",
-                    "audit_note": "open position not closed by exit rules",
-                }
-            )
+            cash += trade.sell_cash_proceeds
+            sold_symbols.append(sym)
 
-    # 确保至少有一条结束 equity
-    if len(equity_points) == 1:
-        equity_points.append(
-            {
-                "date": run_config.end_date,
-                "cash": round(cash, 2),
-                "equity": round(cash, 2),
-                "drawdown": "0.0000",
+            cash_ledger.append({
+                "event": "sell_cash_inflow",
+                "date": bar.trade_date,
+                "symbol": sym,
+                "amount": round(trade.sell_cash_proceeds, 2),
+                "cash_after": round(cash, 2),
                 "track": track_name,
-            }
-        )
+            })
+            position_ledger.append({
+                "event": "close_position",
+                "date": bar.trade_date,
+                "symbol": sym,
+                "shares": pos.shares,
+                "entry_price": pos.entry_price,
+                "exit_price": trade.exit_price,
+                "exit_reason": exit_reason_str,
+                "net_pnl": round(net_pnl, 2),
+                "track": track_name,
+            })
+
+        for sym in sold_symbols:
+            del pending_exits[sym]
+            del current_positions[sym]
+
+        # ================================================================
+        # Phase 2: 处理当日候选（signal_date == date）
+        # ================================================================
+        for cand, score in candidates_by_date.get(date, []):
+            week_key = cand.signal_date[:7]
+            actions = select_candidates(
+                candidates=[cand],
+                current_holdings=list(current_positions.keys()),
+                opened_today=opened_today_by_date.get(cand.signal_date, 0),
+                opened_this_week=opened_week_by_key.get(week_key, 0),
+                parameters=parameters,
+            )
+            open_action = _first_open_action(actions)
+            if open_action is None:
+                skipped_rows.extend(_skip_rows_from_actions(actions, track_name))
+                continue
+
+            # T+1 买入
+            sym_bars = bars_by_symbol.get(cand.symbol, [])
+            entry_bar = _next_bar_after(sym_bars, cand.signal_date)
+            if entry_bar is None:
+                skipped_rows.append(_skip_row(cand, "缺少 T+1 买入行情，无法成交", track_name))
+                continue
+
+            # 计算当前权益（用于仓位管理）
+            current_equity = _compute_equity(cash, current_positions, bars_by_symbol, date)
+
+            buy = execute_buy(
+                candidate=cand,
+                open_price=entry_bar.open,
+                cash=cash,
+                equity=current_equity,
+                high=entry_bar.high,
+                low=entry_bar.low,
+                close=entry_bar.close,
+                limit_up=entry_bar.limit_up,
+                parameters=parameters,
+            )
+            if not buy.executed:
+                skipped_rows.append(_skip_row(cand, buy.skip_reason, track_name))
+                continue
+
+            old_cash = cash
+            cash = buy.cash_remaining
+            opened_today_by_date[cand.signal_date] = opened_today_by_date.get(cand.signal_date, 0) + 1
+            opened_week_by_key[week_key] = opened_week_by_key.get(week_key, 0) + 1
+
+            position = OpenPosition(
+                symbol=cand.symbol,
+                shares=buy.shares,
+                entry_signal_date=cand.signal_date,
+                entry_date=entry_bar.trade_date,
+                entry_price=float(buy.entry_price or 0.0),
+                c_price=cand.c_price,
+                cash_after_entry=cash,
+                highest_close_since_entry=float(entry_bar.close or buy.entry_price or 0.0),
+                commission=buy.commission,
+                slippage=buy.slippage,
+            )
+            current_positions[cand.symbol] = position
+            highest_close_map[cand.symbol] = position.highest_close_since_entry
+
+            cash_ledger.append({
+                "event": "buy_cash_outflow",
+                "date": entry_bar.trade_date,
+                "symbol": cand.symbol,
+                "amount": round(old_cash - cash, 2),
+                "cash_after": round(cash, 2),
+                "track": track_name,
+            })
+            position_ledger.append({
+                "event": "open_position",
+                "date": entry_bar.trade_date,
+                "symbol": cand.symbol,
+                "shares": buy.shares,
+                "entry_price": float(buy.entry_price or 0.0),
+                "track": track_name,
+            })
+
+        # ================================================================
+        # Phase 3: 检测持仓退出信号（基于当日 bar）
+        # ================================================================
+        for sym, pos in list(current_positions.items()):
+            if sym in pending_exits:
+                continue
+            if date <= pos.entry_date:
+                continue
+            sym_bars = bars_by_symbol.get(sym, [])
+            bar = _get_bar_on_date(sym_bars, date)
+            if bar is None:
+                continue
+
+            # 更新最高收盘价
+            if bar.close is not None:
+                prev_highest = highest_close_map.get(sym, pos.highest_close_since_entry)
+                highest_close_map[sym] = max(prev_highest, float(bar.close))
+
+            trading_days = sum(1 for b in sym_bars if pos.entry_date < b.trade_date <= date)
+
+            signal = detect_exit_signal(
+                bars=[bar],
+                entry_price=pos.entry_price,
+                c_price=pos.c_price,
+                highest_close_since_entry=highest_close_map[sym],
+                entry_date=pos.entry_date,
+                current_date=date,
+                trading_days_since_entry=trading_days,
+                parameters=parameters,
+            )
+            if signal is not None:
+                pending_exits[sym] = (signal.signal_date, signal.exit_type.value)
+
+        # ================================================================
+        # Phase 4: 逐日 mark-to-market
+        # ================================================================
+        equity = cash
+        for sym, pos in current_positions.items():
+            bar = _get_bar_on_date(bars_by_symbol.get(sym, []), date)
+            if bar is not None and bar.close is not None:
+                market_value = pos.shares * float(bar.close)
+                equity += market_value
+                position_ledger.append({
+                    "event": "daily_position_state",
+                    "date": date,
+                    "symbol": sym,
+                    "shares": pos.shares,
+                    "close_price": float(bar.close),
+                    "market_value": round(market_value, 2),
+                    "track": track_name,
+                })
+            else:
+                equity += pos.shares * pos.entry_price
+
+        equity_points.append({
+            "date": date,
+            "cash": round(cash, 2),
+            "equity": round(equity, 2),
+            "drawdown": f"{_max_drawdown([float(p['equity']) for p in equity_points] + [equity]):.6f}",
+            "track": track_name,
+        })
+
+    # ---- 收尾 ----
+    cash_ledger.append({
+        "event": "ending_cash",
+        "date": run_config.end_date,
+        "amount": round(cash, 2),
+        "track": track_name,
+    })
+
+    # 未平仓持仓 -> holdings
+    for sym, pos in current_positions.items():
+        holdings_list.append({
+            "date": run_config.end_date,
+            "track": track_name,
+            "symbol": pos.symbol,
+            "shares": str(pos.shares),
+            "cost_basis": f"{pos.shares * pos.entry_price:.2f}",
+            "market_value": f"{pos.shares * pos.entry_price:.2f}",
+            "unrealized_pnl": "0.00",
+            "holding_days": "0",
+            "highest_close_since_entry": f"{highest_close_map.get(sym, pos.highest_close_since_entry):.4f}",
+            "audit_note": "open position not closed by exit rules",
+        })
+
+    if not holdings_list:
+        holdings_list.append({
+            "date": run_config.end_date,
+            "track": track_name,
+            "symbol": "CASH",
+            "shares": "0",
+            "cost_basis": "0.00",
+            "market_value": f"{cash:.2f}",
+            "unrealized_pnl": "0.00",
+            "holding_days": "0",
+            "highest_close_since_entry": "0.0000",
+            "audit_note": "ending cash state",
+        })
 
     if not scored_candidates:
-        skipped_rows.append(
-            {
-                "signal_date": run_config.end_date,
-                "track": track_name,
-                "symbol": "ALL",
-                "reason": "无候选信号",
-            }
-        )
-
-    if not holdings:
-        holdings.append(
-            {
-                "date": run_config.end_date,
-                "track": track_name,
-                "symbol": "CASH",
-                "shares": "0",
-                "cost_basis": "0.00",
-                "market_value": f"{cash:.2f}",
-                "unrealized_pnl": "0.00",
-                "holding_days": "0",
-                "highest_close_since_entry": "0.0000",
-                "audit_note": "ending cash state",
-            }
-        )
+        skipped_rows.append({
+            "signal_date": run_config.end_date,
+            "track": track_name,
+            "symbol": "ALL",
+            "reason": "无候选信号",
+        })
 
     return PortfolioRunResult(
         trades=trades,
-        holdings=holdings,
+        holdings=holdings_list,
         skipped_trades=skipped_rows,
         equity_curve=equity_points,
+        cash_ledger=cash_ledger,
+        position_ledger=position_ledger,
     )
 
 
@@ -338,6 +519,29 @@ def bars_by_symbol(bars: list[StockDaily]) -> dict[str, list[StockDaily]]:
     for symbol_bars in result.values():
         symbol_bars.sort(key=lambda b: b.trade_date)
     return result
+
+
+def _get_bar_on_date(bars: list[StockDaily], date: str) -> StockDaily | None:
+    for bar in bars:
+        if bar.trade_date == date:
+            return bar
+    return None
+
+
+def _compute_equity(
+    cash: float,
+    current_positions: dict[str, OpenPosition],
+    bars_by_symbol: dict[str, list[StockDaily]],
+    date: str,
+) -> float:
+    equity = cash
+    for sym, pos in current_positions.items():
+        bar = _get_bar_on_date(bars_by_symbol.get(sym, []), date)
+        if bar is not None and bar.close is not None:
+            equity += pos.shares * float(bar.close)
+        else:
+            equity += pos.shares * pos.entry_price
+    return equity
 
 
 def _first_open_action(actions: list[PortfolioAction]) -> PortfolioAction | None:
