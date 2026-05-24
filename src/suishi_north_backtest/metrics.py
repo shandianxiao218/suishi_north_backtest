@@ -267,19 +267,23 @@ class BenchmarkResult:
     """基准收益计算结果，区分真实 0% 与缺数据。"""
 
     return_value: float
+    max_drawdown: float
+    annualized_return: float
+    volatility: float
+    return_drawdown_ratio: float
     status: str  # "ok" | "missing" | "insufficient_data"
 
 
-def benchmark_return_in_window(
+def benchmark_metrics_in_window(
     index_daily: list[IndexDaily],
     benchmark_name: str,
     start_date: str,
     end_date: str,
 ) -> BenchmarkResult:
-    """计算指定基准在日期窗口内的总回报，区分真实零收益与缺数据。"""
+    """计算指定基准在日期窗口内的全部指标，区分真实零收益与缺数据。"""
     code = _NAME_TO_CODE.get(benchmark_name)
     if code is None:
-        return BenchmarkResult(return_value=0.0, status="missing")
+        return BenchmarkResult(0.0, 0.0, 0.0, 0.0, 0.0, "missing")
     rows = [
         r for r in index_daily
         if r.index_code == code
@@ -287,16 +291,46 @@ def benchmark_return_in_window(
         and r.close is not None
     ]
     if len(rows) < 2:
-        return BenchmarkResult(return_value=0.0, status="insufficient_data")
+        return BenchmarkResult(0.0, 0.0, 0.0, 0.0, 0.0, "insufficient_data")
     rows.sort(key=lambda r: r.trade_date)
-    first_close = float(rows[0].close)
-    last_close = float(rows[-1].close)
+    closes = [float(r.close) for r in rows]
+    first_close = closes[0]
+    last_close = closes[-1]
     if first_close == 0:
-        return BenchmarkResult(return_value=0.0, status="insufficient_data")
+        return BenchmarkResult(0.0, 0.0, 0.0, 0.0, 0.0, "insufficient_data")
+
+    ret = (last_close - first_close) / first_close
+    bench_dd = _max_drawdown_from_values(closes)
+    bench_curve = _index_curve_from_rows(rows)
+    bench_ann = annualized_return(bench_curve)
+    bench_vol = volatility(bench_curve)
+    bench_rdr = return_drawdown_ratio(ret, bench_dd)
+
     return BenchmarkResult(
-        return_value=(last_close - first_close) / first_close,
+        return_value=ret,
+        max_drawdown=bench_dd,
+        annualized_return=bench_ann,
+        volatility=bench_vol,
+        return_drawdown_ratio=bench_rdr,
         status="ok",
     )
+
+
+def _max_drawdown_from_values(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    peak = values[0]
+    result = 0.0
+    for v in values:
+        peak = max(peak, v)
+        dd = 0.0 if peak == 0 else (peak - v) / peak
+        result = max(result, dd)
+    return result
+
+
+def _index_curve_from_rows(rows: list[IndexDaily]) -> list[dict[str, object]]:
+    """把 IndexDaily 列表转换为 dict-based equity curve 格式。"""
+    return [{"date": r.trade_date, "equity": float(r.close)} for r in rows]
 
 
 # --- 组合函数 ---
@@ -310,7 +344,7 @@ def build_benchmark_comparison_rows(
     required_benchmarks: list[str] | None = None,
     required_periods: list[str] | None = None,
 ) -> list[dict[str, object]]:
-    """构建 benchmark_comparison.csv 行，每个 period 独立计算全部 8 个指标。
+    """构建 benchmark_comparison.csv 行，每个 period 独立计算策略侧和基准侧全部指标。
 
     不复制全周期数字到所有 period。
     trades 按退出日期切分到对应窗口计算胜率和交易次数。
@@ -331,46 +365,50 @@ def build_benchmark_comparison_rows(
         window_trades = _trades_in_window(trades, start, end)
 
         if window_curve:
-            strat_ret = total_return(window_curve)
-            strat_dd = max_drawdown(window_curve)
-            strat_ann = annualized_return(window_curve)
-            strat_vol = volatility(window_curve)
+            s_ret = total_return(window_curve)
+            s_dd = max_drawdown(window_curve)
+            s_ann = annualized_return(window_curve)
+            s_vol = volatility(window_curve)
             curve_note = ""
         else:
-            strat_ret = 0.0
-            strat_dd = 0.0
-            strat_ann = 0.0
-            strat_vol = 0.0
+            s_ret = 0.0
+            s_dd = 0.0
+            s_ann = 0.0
+            s_vol = 0.0
             curve_note = "窗口内无权益数据"
 
-        strat_wr = win_rate(window_trades)
-        strat_tc = trade_count(window_trades)
+        s_wr = win_rate(window_trades)
+        s_tc = trade_count(window_trades)
+        s_rdr = return_drawdown_ratio(s_ret, s_dd)
 
         for benchmark in required_benchmarks:
-            bench_result = benchmark_return_in_window(index_daily, benchmark, start, end)
-            ex_ret = excess_return(strat_ret, bench_result.return_value)
-            rd_ratio = return_drawdown_ratio(strat_ret, strat_dd)
+            b = benchmark_metrics_in_window(index_daily, benchmark, start, end)
+            ex_ret = excess_return(s_ret, b.return_value)
 
             parts = [f"window=[{start},{end}]"]
             if curve_note:
                 parts.append(curve_note)
-            if bench_result.status != "ok":
-                parts.append(f"{benchmark}基准{bench_result.status}")
+            if b.status != "ok":
+                parts.append(f"{benchmark}基准{b.status}")
             parts.append("per-period real benchmark comparison")
 
             rows.append({
                 "period": period,
                 "benchmark": benchmark,
-                "strategy_return": f"{strat_ret * 100:.2f}",
-                "benchmark_return": f"{bench_result.return_value * 100:.2f}",
-                "benchmark_status": bench_result.status,
+                "strategy_return": f"{s_ret * 100:.2f}",
+                "strategy_max_drawdown": f"{s_dd * 100:.2f}",
+                "strategy_annualized_return": f"{s_ann * 100:.2f}",
+                "strategy_volatility": f"{s_vol * 100:.2f}",
+                "strategy_win_rate": f"{s_wr * 100:.2f}",
+                "strategy_trade_count": str(s_tc),
+                "strategy_return_drawdown_ratio": f"{s_rdr:.2f}",
+                "benchmark_return": f"{b.return_value * 100:.2f}",
+                "benchmark_max_drawdown": f"{b.max_drawdown * 100:.2f}",
+                "benchmark_annualized_return": f"{b.annualized_return * 100:.2f}",
+                "benchmark_volatility": f"{b.volatility * 100:.2f}",
+                "benchmark_return_drawdown_ratio": f"{b.return_drawdown_ratio:.2f}",
                 "excess_return": f"{ex_ret * 100:.2f}",
-                "max_drawdown": f"{strat_dd * 100:.2f}",
-                "annualized_return": f"{strat_ann * 100:.2f}",
-                "volatility": f"{strat_vol * 100:.2f}",
-                "win_rate": f"{strat_wr * 100:.2f}",
-                "trade_count": str(strat_tc),
-                "return_drawdown_ratio": f"{rd_ratio:.2f}",
+                "benchmark_status": b.status,
                 "audit_note": "; ".join(parts),
             })
 

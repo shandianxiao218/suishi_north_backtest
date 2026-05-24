@@ -10,11 +10,12 @@
 - test_missing_benchmark_is_reported
 
 整改要求补充：
-- benchmark_comparison 输出包含全部 8 个指标
+- benchmark_comparison 输出同时包含策略侧和基准侧指标
 - win_rate / trade_count 按 period 正确统计
 - 真实 0% benchmark return 不被误报为缺失
 - 缺少基准数据时 benchmark_status 明确标记
-- 三个 period 的策略/基准指标独立计算，不复制全周期数字
+- 三个 period 独立计算，不复制全周期数字
+- sample_in / sample_out / recent 精确期望值断言
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ from suishi_north_backtest.metrics import (
     BenchmarkResult,
     EquityPoint,
     annualized_return,
-    benchmark_return_in_window,
+    benchmark_metrics_in_window,
     build_benchmark_comparison_rows,
     compare_with_benchmarks,
     equity_curve_in_window,
@@ -42,17 +43,67 @@ from suishi_north_backtest.metrics import (
 )
 
 
-# --- 旧接口测试（保留） ---
+# --- 辅助构造 ---
 
 
 def _ep(d: str, equity: float) -> dict[str, object]:
-    """快捷构造 dict-based equity point。"""
     return {"date": d, "equity": equity}
 
 
 def _trade(exit_date: str, net_pnl: float) -> dict[str, object]:
-    """快捷构造交易记录，用于按窗口切分测试。"""
     return {"exit_date": exit_date, "net_pnl": net_pnl}
+
+
+# --- 共享测试数据 ---
+
+# equity curve 跨 3 个 period，每个 period 有不同收益
+EQUITY = [
+    _ep("2018-01-02", 1_000_000),
+    _ep("2022-12-30", 1_200_000),   # sample_in: +20%
+    _ep("2023-01-02", 1_200_000),
+    _ep("2023-12-29", 1_080_000),   # sample_out: -10%
+    _ep("2024-01-02", 1_080_000),
+    _ep("2024-06-28", 1_188_000),   # recent: +10%
+]
+
+# CSI300 基准: sample_in +20%, sample_out -5%, recent +5%
+INDEX_DAILY = [
+    IndexDaily("2018-01-02", "000300", None, None, None, 3000.0, None, None),
+    IndexDaily("2022-12-30", "000300", None, None, None, 3600.0, None, None),
+    IndexDaily("2023-01-02", "000300", None, None, None, 3600.0, None, None),
+    IndexDaily("2023-12-29", "000300", None, None, None, 3420.0, None, None),
+    IndexDaily("2024-01-02", "000300", None, None, None, 3420.0, None, None),
+    IndexDaily("2024-06-28", "000300", None, None, None, 3591.0, None, None),
+    # CSI500: sample_in +10%, sample_out -15%, recent +5%
+    IndexDaily("2018-01-02", "000905", None, None, None, 5000.0, None, None),
+    IndexDaily("2022-12-30", "000905", None, None, None, 5500.0, None, None),
+    IndexDaily("2023-01-02", "000905", None, None, None, 5500.0, None, None),
+    IndexDaily("2023-12-29", "000905", None, None, None, 4675.0, None, None),
+    IndexDaily("2024-01-02", "000905", None, None, None, 4675.0, None, None),
+    IndexDaily("2024-06-28", "000905", None, None, None, 4908.75, None, None),
+    # CSI1000: 只有 sample_in 数据，其余 insufficient
+    IndexDaily("2018-01-02", "000852", None, None, None, 1000.0, None, None),
+    IndexDaily("2022-12-30", "000852", None, None, None, 1200.0, None, None),
+]
+
+# trades 跨 3 个 period
+TRADES = [
+    _trade("2022-06-15", 100.0),   # sample_in: win
+    _trade("2023-06-15", -50.0),   # sample_out: loss
+    _trade("2024-03-15", 200.0),   # recent: win
+]
+
+AS_OF = "2024-06-30"
+
+ALL_ROWS = build_benchmark_comparison_rows(
+    equity_curve=EQUITY,
+    index_daily=INDEX_DAILY,
+    as_of=AS_OF,
+    trades=TRADES,
+)
+
+
+# --- 旧接口测试（保留） ---
 
 
 class TestLegacyEquityPointAPI:
@@ -264,45 +315,47 @@ class TestTradeCount:
         assert trade_count([]) == 0
 
 
-class TestBenchmarkReturnInWindow:
-    """test_benchmark_return_in_window_filters_correctly"""
+class TestBenchmarkMetricsInWindow:
+    """基准指标按窗口计算，区分 ok / missing / insufficient_data。"""
 
-    def test_filters_to_window(self) -> None:
-        index_daily = [
-            IndexDaily("2020-01-02", "000300", None, None, None, 3000.0, None, None),
-            IndexDaily("2021-06-30", "000300", None, None, None, 3600.0, None, None),
-            IndexDaily("2023-06-30", "000300", None, None, None, 3300.0, None, None),
-        ]
-        ret_full = benchmark_return_in_window(index_daily, "CSI300", "2020-01-01", "2023-12-31")
-        ret_2021 = benchmark_return_in_window(index_daily, "CSI300", "2020-01-01", "2021-12-31")
-        assert ret_full.status == "ok"
-        assert abs(ret_full.return_value - 0.1) < 1e-4
-        assert ret_2021.status == "ok"
-        assert abs(ret_2021.return_value - 0.2) < 1e-4
+    def test_ok_with_full_data(self) -> None:
+        result = benchmark_metrics_in_window(INDEX_DAILY, "CSI300", "2018-01-01", "2022-12-31")
+        assert result.status == "ok"
+        assert abs(result.return_value - 0.2) < 1e-4   # 3000->3600 = +20%
+        assert result.max_drawdown == 0.0               # 单调递增
+        assert result.volatility == 0.0                  # 只有2点，无法算std
 
-    def test_out_of_range_returns_insufficient(self) -> None:
-        index_daily = [
-            IndexDaily("2020-01-02", "000300", None, None, None, 3000.0, None, None),
-            IndexDaily("2020-12-31", "000300", None, None, None, 3300.0, None, None),
-        ]
-        ret = benchmark_return_in_window(index_daily, "CSI300", "2025-01-01", "2025-12-31")
-        assert ret.status == "insufficient_data"
-        assert ret.return_value == 0.0
+    def test_insufficient_data(self) -> None:
+        result = benchmark_metrics_in_window(INDEX_DAILY, "CSI300", "2025-01-01", "2025-12-31")
+        assert result.status == "insufficient_data"
+        assert result.return_value == 0.0
 
-    def test_unknown_benchmark_returns_missing(self) -> None:
-        ret = benchmark_return_in_window([], "UNKNOWN", "2020-01-01", "2020-12-31")
-        assert ret.status == "missing"
-        assert ret.return_value == 0.0
+    def test_missing_benchmark(self) -> None:
+        result = benchmark_metrics_in_window([], "UNKNOWN", "2020-01-01", "2020-12-31")
+        assert result.status == "missing"
+        assert result.return_value == 0.0
 
     def test_true_zero_return_is_ok(self) -> None:
-        """真实 0% 收益应返回 status=ok，不是 missing/insufficient_data。"""
-        index_daily = [
+        """真实 0% 收益应返回 status=ok。"""
+        data = [
             IndexDaily("2024-01-02", "000300", None, None, None, 3000.0, None, None),
             IndexDaily("2024-06-30", "000300", None, None, None, 3000.0, None, None),
         ]
-        ret = benchmark_return_in_window(index_daily, "CSI300", "2024-01-01", "2024-12-31")
-        assert ret.status == "ok"
-        assert ret.return_value == 0.0
+        result = benchmark_metrics_in_window(data, "CSI300", "2024-01-01", "2024-12-31")
+        assert result.status == "ok"
+        assert result.return_value == 0.0
+
+    def test_benchmark_max_drawdown(self) -> None:
+        """基准指数有回撤时正确计算。"""
+        data = [
+            IndexDaily("2024-01-01", "000300", None, None, None, 100.0, None, None),
+            IndexDaily("2024-06-01", "000300", None, None, None, 120.0, None, None),
+            IndexDaily("2024-12-01", "000300", None, None, None, 108.0, None, None),
+        ]
+        result = benchmark_metrics_in_window(data, "CSI300", "2024-01-01", "2024-12-31")
+        assert result.status == "ok"
+        # peak=120, trough=108, dd = 12/120 = 0.1
+        assert abs(result.max_drawdown - 0.1) < 1e-4
 
 
 class TestEquityCurveInWindow:
@@ -324,6 +377,183 @@ class TestEquityCurveInWindow:
         assert result == []
 
 
+# --- 精确断言测试：benchmark_comparison 全量输出 ---
+
+
+class TestBuildBenchmarkComparisonExactValues:
+    """对 sample_in / sample_out / recent 做精确期望值断言。"""
+
+    def _rows_for(self, benchmark: str) -> dict[str, dict[str, object]]:
+        return {
+            r["period"]: r
+            for r in ALL_ROWS
+            if r["benchmark"] == benchmark
+        }
+
+    # --- CSI300 sample_in 精确断言 ---
+
+    def test_csi300_sample_in_strategy_return(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["strategy_return"] == "20.00"
+
+    def test_csi300_sample_in_benchmark_return(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["benchmark_return"] == "20.00"
+
+    def test_csi300_sample_in_benchmark_status(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["benchmark_status"] == "ok"
+
+    def test_csi300_sample_in_win_rate_and_trade_count(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["strategy_win_rate"] == "100.00"
+        assert row["strategy_trade_count"] == "1"
+
+    # --- CSI300 sample_out 精确断言 ---
+    # 策略: 1_200_000 -> 1_188_000 = -1%
+    # CSI300: 3600 -> 3591 = -0.25%
+    # trades: 2 trades (1 loss, 1 win) -> wr=50%
+
+    def test_csi300_sample_out_strategy_return(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["strategy_return"] == "-1.00"
+
+    def test_csi300_sample_out_benchmark_return(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["benchmark_return"] == "-0.25"
+
+    def test_csi300_sample_out_benchmark_status(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["benchmark_status"] == "ok"
+
+    def test_csi300_sample_out_win_rate_and_trade_count(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["strategy_win_rate"] == "50.00"
+        assert row["strategy_trade_count"] == "2"
+
+    # --- CSI300 recent 精确断言 ---
+
+    def test_csi300_recent_strategy_return(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["strategy_return"] == "10.00"
+
+    def test_csi300_recent_benchmark_return(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["benchmark_return"] == "5.00"
+
+    def test_csi300_recent_benchmark_status(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["benchmark_status"] == "ok"
+
+    def test_csi300_recent_win_rate_and_trade_count(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["strategy_win_rate"] == "100.00"
+        assert row["strategy_trade_count"] == "1"
+
+    # --- CSI500 精确断言 ---
+
+    def test_csi500_sample_in_benchmark_return(self) -> None:
+        row = self._rows_for("CSI500")["sample_in"]
+        assert row["benchmark_return"] == "10.00"
+        assert row["benchmark_status"] == "ok"
+
+    # --- CSI500 sample_out: 5500 -> 4908.75 = -10.75% ---
+
+    def test_csi500_sample_out_benchmark_return(self) -> None:
+        row = self._rows_for("CSI500")["sample_out"]
+        assert row["benchmark_return"] == "-10.75"
+        assert row["benchmark_status"] == "ok"
+
+    def test_csi500_recent_benchmark_return(self) -> None:
+        row = self._rows_for("CSI500")["recent"]
+        assert row["benchmark_return"] == "5.00"
+        assert row["benchmark_status"] == "ok"
+
+    # --- CSI1000：只有 sample_in 有数据 ---
+
+    def test_csi1000_sample_in_ok(self) -> None:
+        row = self._rows_for("CSI1000")["sample_in"]
+        assert row["benchmark_return"] == "20.00"
+        assert row["benchmark_status"] == "ok"
+
+    def test_csi1000_sample_out_insufficient(self) -> None:
+        row = self._rows_for("CSI1000")["sample_out"]
+        assert row["benchmark_return"] == "0.00"
+        assert row["benchmark_status"] == "insufficient_data"
+
+    def test_csi1000_recent_insufficient(self) -> None:
+        row = self._rows_for("CSI1000")["recent"]
+        assert row["benchmark_return"] == "0.00"
+        assert row["benchmark_status"] == "insufficient_data"
+
+    # --- 三个 period 策略指标独立计算 ---
+
+    def test_strategy_return_per_period_not_copied(self) -> None:
+        csi300 = self._rows_for("CSI300")
+        si = csi300["sample_in"]["strategy_return"]
+        so = csi300["sample_out"]["strategy_return"]
+        r = csi300["recent"]["strategy_return"]
+        assert si != so
+        assert so != r
+
+    def test_benchmark_return_per_period_not_copied(self) -> None:
+        csi300 = self._rows_for("CSI300")
+        si = csi300["sample_in"]["benchmark_return"]
+        so = csi300["sample_out"]["benchmark_return"]
+        r = csi300["recent"]["benchmark_return"]
+        assert si != so
+        assert so != r
+
+
+class TestBuildBenchmarkComparisonAllColumns:
+    """输出包含全部必需列。"""
+
+    REQUIRED_COLUMNS = {
+        "period", "benchmark",
+        "strategy_return", "strategy_max_drawdown",
+        "strategy_annualized_return", "strategy_volatility",
+        "strategy_win_rate", "strategy_trade_count",
+        "strategy_return_drawdown_ratio",
+        "benchmark_return", "benchmark_max_drawdown",
+        "benchmark_annualized_return", "benchmark_volatility",
+        "benchmark_return_drawdown_ratio",
+        "excess_return", "benchmark_status", "audit_note",
+    }
+
+    def test_all_required_columns_present(self) -> None:
+        for row in ALL_ROWS:
+            assert self.REQUIRED_COLUMNS <= set(row.keys()), (
+                f"缺少列: {self.REQUIRED_COLUMNS - set(row.keys())}"
+            )
+
+    def test_audit_note_contains_window(self) -> None:
+        for row in ALL_ROWS:
+            assert "window=[" in str(row["audit_note"])
+
+
+class TestTrueZeroBenchmarkNotMisreported:
+    """真实 0% benchmark return 不被误报为缺失。"""
+
+    def test_zero_return_has_ok_status(self) -> None:
+        data = [
+            IndexDaily("2023-01-02", "000300", None, None, None, 3000.0, None, None),
+            IndexDaily("2024-06-28", "000300", None, None, None, 3000.0, None, None),
+        ]
+        equity = [_ep("2024-01-01", 1_000_000), _ep("2024-06-30", 1_100_000)]
+        rows = build_benchmark_comparison_rows(
+            equity_curve=equity,
+            index_daily=data,
+            as_of="2024-06-30",
+            required_benchmarks=["CSI300"],
+            required_periods=["sample_out"],
+        )
+        assert len(rows) == 1
+        assert rows[0]["benchmark_return"] == "0.00"
+        assert rows[0]["benchmark_status"] == "ok"
+        assert "insufficient_data" not in str(rows[0]["audit_note"])
+        assert "missing" not in str(rows[0]["audit_note"])
+
+
 class TestMissingBenchmarkIsReported:
     """test_missing_benchmark_is_reported"""
 
@@ -332,10 +562,7 @@ class TestMissingBenchmarkIsReported:
             IndexDaily("2023-01-02", "000300", None, None, None, 3000.0, None, None),
             IndexDaily("2024-06-28", "000300", None, None, None, 3300.0, None, None),
         ]
-        equity = [
-            _ep("2024-01-01", 1_000_000),
-            _ep("2024-06-30", 1_100_000),
-        ]
+        equity = [_ep("2024-01-01", 1_000_000), _ep("2024-06-30", 1_100_000)]
         rows = build_benchmark_comparison_rows(
             equity_curve=equity,
             index_daily=index_daily,
@@ -348,186 +575,12 @@ class TestMissingBenchmarkIsReported:
             assert row["benchmark_status"] in ("missing", "insufficient_data")
             assert "CSI500" in str(row["audit_note"])
 
-        csi1000_rows = [r for r in rows if r["benchmark"] == "CSI1000"]
-        assert len(csi1000_rows) >= 1
-        for row in csi1000_rows:
-            assert row["benchmark_return"] == "0.00"
-            assert row["benchmark_status"] in ("missing", "insufficient_data")
-
-
-class TestBuildBenchmarkComparisonRowsAllEightMetrics:
-    """benchmark_comparison 输出包含全部 8 个指标。"""
-
-    def _make_full_rows(self) -> list[dict[str, object]]:
-        equity = [
-            _ep("2018-01-02", 1_000_000),
-            _ep("2022-12-30", 1_200_000),
-            _ep("2023-01-02", 1_200_000),
-            _ep("2023-12-29", 1_080_000),
-            _ep("2024-01-02", 1_080_000),
-            _ep("2024-06-28", 1_188_000),
-        ]
-        index_daily = [
-            IndexDaily("2018-01-02", "000300", None, None, None, 3000.0, None, None),
-            IndexDaily("2022-12-30", "000300", None, None, None, 3600.0, None, None),
-            IndexDaily("2023-01-02", "000300", None, None, None, 3600.0, None, None),
-            IndexDaily("2023-12-29", "000300", None, None, None, 3420.0, None, None),
-            IndexDaily("2024-01-02", "000300", None, None, None, 3420.0, None, None),
-            IndexDaily("2024-06-28", "000300", None, None, None, 3591.0, None, None),
-        ]
-        trades = [
-            _trade("2022-06-15", 100.0),
-            _trade("2023-06-15", -50.0),
-            _trade("2024-03-15", 200.0),
-        ]
-        return build_benchmark_comparison_rows(
-            equity_curve=equity,
-            index_daily=index_daily,
-            as_of="2024-06-30",
-            trades=trades,
-        )
-
-    def test_all_required_columns_present(self) -> None:
-        rows = self._make_full_rows()
-        required = {
-            "period", "benchmark", "strategy_return", "benchmark_return",
-            "benchmark_status", "excess_return", "max_drawdown",
-            "annualized_return", "volatility", "win_rate",
-            "trade_count", "return_drawdown_ratio", "audit_note",
-        }
-        for row in rows:
-            assert required <= set(row.keys()), f"缺少列: {required - set(row.keys())}"
-
-    def test_strategy_return_is_per_period(self) -> None:
-        rows = self._make_full_rows()
-        csi300 = {r["period"]: r for r in rows if r["benchmark"] == "CSI300"}
-        assert csi300["sample_in"]["strategy_return"] != csi300["sample_out"]["strategy_return"]
-        assert csi300["sample_out"]["strategy_return"] != csi300["recent"]["strategy_return"]
-
-    def test_benchmark_return_is_per_period(self) -> None:
-        rows = self._make_full_rows()
-        csi300 = {r["period"]: r for r in rows if r["benchmark"] == "CSI300"}
-        assert csi300["sample_in"]["benchmark_return"] != csi300["sample_out"]["benchmark_return"]
-        assert csi300["sample_out"]["benchmark_return"] != csi300["recent"]["benchmark_return"]
-
-    def test_win_rate_and_trade_count_per_period(self) -> None:
-        """win_rate / trade_count 按窗口切分交易统计。"""
-        rows = self._make_full_rows()
-        csi300 = {r["period"]: r for r in rows if r["benchmark"] == "CSI300"}
-        # sample_in (2018-2022): 1 trade (win) -> wr=100%, tc=1
-        assert csi300["sample_in"]["trade_count"] == "1"
-        assert csi300["sample_in"]["win_rate"] == "100.00"
-        # sample_out (2023-2024-06): 2 trades (1 loss, 1 win) -> wr=50%, tc=2
-        assert csi300["sample_out"]["trade_count"] == "2"
-        assert csi300["sample_out"]["win_rate"] == "50.00"
-        # recent (2024): 1 trade (win) -> wr=100%, tc=1
-        assert csi300["recent"]["trade_count"] == "1"
-        assert csi300["recent"]["win_rate"] == "100.00"
-
-    def test_annualized_return_per_period(self) -> None:
-        rows = self._make_full_rows()
-        for row in rows:
-            val = row["annualized_return"]
-            assert isinstance(val, str)
-            float(val)  # 可解析
-
-    def test_volatility_per_period(self) -> None:
-        rows = self._make_full_rows()
-        for row in rows:
-            val = row["volatility"]
-            assert isinstance(val, str)
-            float(val)  # 可解析
-
-    def test_audit_note_contains_window(self) -> None:
-        rows = self._make_full_rows()
-        for row in rows:
-            assert "window=[" in str(row["audit_note"])
-
-
-class TestBuildBenchmarkComparisonRowsNotCopies:
-    """test_build_benchmark_comparison_rows_not_copies — 每个 period 数字不同。"""
-
-    def test_different_periods_have_different_numbers(self) -> None:
-        equity = [
-            _ep("2018-01-02", 1_000_000),
-            _ep("2022-12-30", 1_200_000),
-            _ep("2023-01-02", 1_200_000),
-            _ep("2023-12-29", 1_080_000),
-            _ep("2024-01-02", 1_080_000),
-            _ep("2024-06-28", 1_188_000),
-        ]
-        index_daily = [
-            IndexDaily("2018-01-02", "000300", None, None, None, 3000.0, None, None),
-            IndexDaily("2022-12-30", "000300", None, None, None, 3600.0, None, None),
-            IndexDaily("2023-01-02", "000300", None, None, None, 3600.0, None, None),
-            IndexDaily("2023-12-29", "000300", None, None, None, 3420.0, None, None),
-            IndexDaily("2024-01-02", "000300", None, None, None, 3420.0, None, None),
-            IndexDaily("2024-06-28", "000300", None, None, None, 3591.0, None, None),
-        ]
-        rows = build_benchmark_comparison_rows(
-            equity_curve=equity,
-            index_daily=index_daily,
-            as_of="2024-06-30",
-        )
-
-        csi300_rows = {r["period"]: r for r in rows if r["benchmark"] == "CSI300"}
-
-        si_strat = csi300_rows["sample_in"]["strategy_return"]
-        so_strat = csi300_rows["sample_out"]["strategy_return"]
-        r_strat = csi300_rows["recent"]["strategy_return"]
-
-        assert si_strat != so_strat, f"sample_in={si_strat} should != sample_out={so_strat}"
-        assert so_strat != r_strat, f"sample_out={so_strat} should != recent={r_strat}"
-
-        si_bench = csi300_rows["sample_in"]["benchmark_return"]
-        so_bench = csi300_rows["sample_out"]["benchmark_return"]
-        r_bench = csi300_rows["recent"]["benchmark_return"]
-        assert si_bench != so_bench, f"bench sample_in={si_bench} should != sample_out={so_bench}"
-        assert so_bench != r_bench, f"bench sample_out={so_bench} should != recent={r_bench}"
-
-        for row in rows:
-            assert "window=[" in str(row["audit_note"])
-
-
-class TestTrueZeroBenchmarkNotMisreported:
-    """真实 0% benchmark return 不被误报为缺失。"""
-
-    def test_zero_return_has_ok_status(self) -> None:
-        index_daily = [
-            IndexDaily("2023-01-02", "000300", None, None, None, 3000.0, None, None),
-            IndexDaily("2024-06-28", "000300", None, None, None, 3000.0, None, None),
-            IndexDaily("2023-01-02", "000905", None, None, None, 5000.0, None, None),
-            IndexDaily("2024-06-28", "000905", None, None, None, 5500.0, None, None),
-        ]
-        equity = [
-            _ep("2024-01-01", 1_000_000),
-            _ep("2024-06-30", 1_100_000),
-        ]
-        rows = build_benchmark_comparison_rows(
-            equity_curve=equity,
-            index_daily=index_daily,
-            as_of="2024-06-30",
-            required_benchmarks=["CSI300"],
-            required_periods=["sample_out"],
-        )
-        assert len(rows) == 1
-        row = rows[0]
-        # CSI300 在窗口内 3000->3000 = 0%，但 status 应该是 ok
-        assert row["benchmark_return"] == "0.00"
-        assert row["benchmark_status"] == "ok"
-        # audit_note 不应包含 "insufficient_data" 或 "missing"
-        assert "insufficient_data" not in str(row["audit_note"])
-        assert "missing" not in str(row["audit_note"])
-
 
 class TestBenchmarkComparisonWithNoTrades:
     """无交易时 win_rate=0, trade_count=0。"""
 
     def test_no_trades(self) -> None:
-        equity = [
-            _ep("2024-01-01", 1_000_000),
-            _ep("2024-06-30", 1_100_000),
-        ]
+        equity = [_ep("2024-01-01", 1_000_000), _ep("2024-06-30", 1_100_000)]
         rows = build_benchmark_comparison_rows(
             equity_curve=equity,
             index_daily=[],
@@ -537,5 +590,18 @@ class TestBenchmarkComparisonWithNoTrades:
             required_periods=["recent"],
         )
         assert len(rows) == 1
-        assert rows[0]["win_rate"] == "0.00"
-        assert rows[0]["trade_count"] == "0"
+        assert rows[0]["strategy_win_rate"] == "0.00"
+        assert rows[0]["strategy_trade_count"] == "0"
+
+
+class TestRunnerCoversAllThreeBenchmarks:
+    """三个基准 CSI300/CSI500/CSI1000 都在输出中。"""
+
+    def test_all_benchmarks_present(self) -> None:
+        benchmarks = {r["benchmark"] for r in ALL_ROWS}
+        assert benchmarks == {"CSI300", "CSI500", "CSI1000"}
+
+    def test_all_periods_per_benchmark(self) -> None:
+        for bench in ["CSI300", "CSI500", "CSI1000"]:
+            periods = {r["period"] for r in ALL_ROWS if r["benchmark"] == bench}
+            assert periods == {"sample_in", "sample_out", "recent"}
