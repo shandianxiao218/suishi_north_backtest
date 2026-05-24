@@ -235,6 +235,7 @@ def run_mvp1_from_raw_snapshot(
             equity_curve=primary_equity,
             index_daily=market_data.index_daily,
             as_of=as_of,
+            trades=_trade_rows(all_trades),
             required_benchmarks=REQUIRED_BENCHMARKS,
             required_periods=REQUIRED_PERIODS,
         ),

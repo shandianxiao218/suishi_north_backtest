@@ -262,16 +262,24 @@ def equity_curve_in_window(
     ]
 
 
+@dataclass(frozen=True)
+class BenchmarkResult:
+    """基准收益计算结果，区分真实 0% 与缺数据。"""
+
+    return_value: float
+    status: str  # "ok" | "missing" | "insufficient_data"
+
+
 def benchmark_return_in_window(
     index_daily: list[IndexDaily],
     benchmark_name: str,
     start_date: str,
     end_date: str,
-) -> float:
-    """计算指定基准在日期窗口内的总回报。"""
+) -> BenchmarkResult:
+    """计算指定基准在日期窗口内的总回报，区分真实零收益与缺数据。"""
     code = _NAME_TO_CODE.get(benchmark_name)
     if code is None:
-        return 0.0
+        return BenchmarkResult(return_value=0.0, status="missing")
     rows = [
         r for r in index_daily
         if r.index_code == code
@@ -279,13 +287,16 @@ def benchmark_return_in_window(
         and r.close is not None
     ]
     if len(rows) < 2:
-        return 0.0
+        return BenchmarkResult(return_value=0.0, status="insufficient_data")
     rows.sort(key=lambda r: r.trade_date)
     first_close = float(rows[0].close)
     last_close = float(rows[-1].close)
     if first_close == 0:
-        return 0.0
-    return (last_close - first_close) / first_close
+        return BenchmarkResult(return_value=0.0, status="insufficient_data")
+    return BenchmarkResult(
+        return_value=(last_close - first_close) / first_close,
+        status="ok",
+    )
 
 
 # --- 组合函数 ---
@@ -295,17 +306,21 @@ def build_benchmark_comparison_rows(
     equity_curve: list[dict[str, object]],
     index_daily: list[IndexDaily],
     as_of: str,
+    trades: list[dict[str, object]] | None = None,
     required_benchmarks: list[str] | None = None,
     required_periods: list[str] | None = None,
 ) -> list[dict[str, object]]:
-    """构建 benchmark_comparison.csv 行，每个 period 独立计算指标。
+    """构建 benchmark_comparison.csv 行，每个 period 独立计算全部 8 个指标。
 
     不复制全周期数字到所有 period。
+    trades 按退出日期切分到对应窗口计算胜率和交易次数。
     """
     if required_benchmarks is None:
         required_benchmarks = ["CSI300", "CSI500", "CSI1000"]
     if required_periods is None:
         required_periods = ["sample_in", "sample_out", "recent"]
+    if trades is None:
+        trades = []
 
     windows = sample_windows(as_of)
     rows: list[dict[str, object]] = []
@@ -313,37 +328,62 @@ def build_benchmark_comparison_rows(
     for period in required_periods:
         start, end = windows[period]
         window_curve = equity_curve_in_window(equity_curve, start, end)
+        window_trades = _trades_in_window(trades, start, end)
 
         if window_curve:
             strat_ret = total_return(window_curve)
             strat_dd = max_drawdown(window_curve)
+            strat_ann = annualized_return(window_curve)
+            strat_vol = volatility(window_curve)
             curve_note = ""
         else:
             strat_ret = 0.0
             strat_dd = 0.0
+            strat_ann = 0.0
+            strat_vol = 0.0
             curve_note = "窗口内无权益数据"
 
+        strat_wr = win_rate(window_trades)
+        strat_tc = trade_count(window_trades)
+
         for benchmark in required_benchmarks:
-            bench_ret = benchmark_return_in_window(index_daily, benchmark, start, end)
-            ex_ret = excess_return(strat_ret, bench_ret)
+            bench_result = benchmark_return_in_window(index_daily, benchmark, start, end)
+            ex_ret = excess_return(strat_ret, bench_result.return_value)
             rd_ratio = return_drawdown_ratio(strat_ret, strat_dd)
 
             parts = [f"window=[{start},{end}]"]
             if curve_note:
                 parts.append(curve_note)
-            if bench_ret == 0.0:
-                parts.append(f"缺少{benchmark}基准数据或窗口内数据不足")
+            if bench_result.status != "ok":
+                parts.append(f"{benchmark}基准{bench_result.status}")
             parts.append("per-period real benchmark comparison")
 
             rows.append({
                 "period": period,
                 "benchmark": benchmark,
                 "strategy_return": f"{strat_ret * 100:.2f}",
-                "benchmark_return": f"{bench_ret * 100:.2f}",
+                "benchmark_return": f"{bench_result.return_value * 100:.2f}",
+                "benchmark_status": bench_result.status,
                 "excess_return": f"{ex_ret * 100:.2f}",
                 "max_drawdown": f"{strat_dd * 100:.2f}",
+                "annualized_return": f"{strat_ann * 100:.2f}",
+                "volatility": f"{strat_vol * 100:.2f}",
+                "win_rate": f"{strat_wr * 100:.2f}",
+                "trade_count": str(strat_tc),
                 "return_drawdown_ratio": f"{rd_ratio:.2f}",
                 "audit_note": "; ".join(parts),
             })
 
     return rows
+
+
+def _trades_in_window(
+    trades: list[dict[str, object]],
+    start_date: str,
+    end_date: str,
+) -> list[dict[str, object]]:
+    """按退出日期切分交易到窗口。"""
+    return [
+        t for t in trades
+        if start_date <= str(t.get("exit_date", "")) <= end_date
+    ]

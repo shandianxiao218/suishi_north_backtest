@@ -226,6 +226,12 @@ def test_raw_runner_benchmark_comparison_uses_sample_windows(
     assert csi300_rows["sample_in"]["benchmark_return"] != csi300_rows["recent"]["benchmark_return"]
     for row in csi300_rows.values():
         assert "window=[" in str(row["audit_note"])
+        # Issue #36：全部 8 个指标列必须存在
+        assert "annualized_return" in row
+        assert "volatility" in row
+        assert "win_rate" in row
+        assert "trade_count" in row
+        assert "benchmark_status" in row
 
 
 def test_raw_runner_can_write_mvp1_output_dir(tmp_path: Path) -> None:

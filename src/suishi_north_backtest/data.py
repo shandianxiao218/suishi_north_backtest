@@ -334,8 +334,13 @@ def _benchmark_row(
         "benchmark": benchmark,
         "strategy_return": strategy_return,
         "benchmark_return": benchmark_return,
+        "benchmark_status": "ok",
         "excess_return": f"{excess:.2f}",
         "max_drawdown": "1.25",
+        "annualized_return": "0.00",
+        "volatility": "0.00",
+        "win_rate": "50.00",
+        "trade_count": "1",
         "return_drawdown_ratio": "2.74",
         "audit_note": "deterministic fixture benchmark comparison",
     }
