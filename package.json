@@ -5,7 +5,11 @@
   "description": "随势向北股票趋势交易系统的回测与优化系统",
   "scripts": {
     "prepare": "husky && chmod +x .husky/pre-commit",
-    "test": "python -m pytest"
+    "test": "python -m pytest",
+    "acceptance": "python scripts/acceptance_check.py",
+    "acceptance:smoke": "python scripts/acceptance_check.py --profile smoke",
+    "acceptance:real": "python scripts/acceptance_check.py --profile real",
+    "snapshot:build": "python -m suishi_north_backtest.snapshot_builder"
   },
   "devDependencies": {
     "husky": "^9.1.7",
