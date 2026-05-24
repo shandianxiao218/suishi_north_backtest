@@ -118,6 +118,10 @@ def mvp1_csv_specs() -> list[CsvOutputSpec]:
                 "benchmark_return",
                 "excess_return",
                 "max_drawdown",
+                "annualized_return",
+                "volatility",
+                "win_rate",
+                "trade_count",
                 "return_drawdown_ratio",
                 "audit_note",
             ],
@@ -183,17 +187,7 @@ def mvp1_json_specs() -> list[JsonOutputSpec]:
 
 
 def mvp1_required_files(profile: str) -> list[str]:
-    """按验收 profile 返回必需文件列表。
-
-    Args:
-        profile: "smoke", "full", "real"
-
-    Returns:
-        该 profile 要求的文件名列表。
-
-    Raises:
-        ValueError: 未知的 profile。
-    """
+    """按验收 profile 返回必需文件列表。"""
     smoke_files = [
         "equity_curve.csv",
         "trades.csv",
@@ -222,11 +216,7 @@ def validate_csv_header(
     header: list[str],
     required: list[str],
 ) -> list[str]:
-    """校验 CSV header 是否包含所有必需列。
-
-    Returns:
-        错误消息列表，空列表表示通过。
-    """
+    """校验 CSV header 是否包含所有必需列。"""
     header_set = set(header)
     missing = [col for col in required if col not in header_set]
     if missing:
@@ -239,11 +229,7 @@ def validate_json_required_fields(
     data: dict,
     required: list[str],
 ) -> list[str]:
-    """校验 JSON 对象是否包含所有必需字段。
-
-    Returns:
-        错误消息列表，空列表表示通过。
-    """
+    """校验 JSON 对象是否包含所有必需字段。"""
     missing = [field for field in required if field not in data]
     if missing:
         return [f"{filename} 缺少必需字段：" + ", ".join(missing)]
@@ -254,11 +240,7 @@ def validate_output_contract(
     output_dir: Path,
     profile: str = "full",
 ) -> list[str]:
-    """校验输出目录是否符合 MVP-1 输出协议。
-
-    Returns:
-        错误消息列表，空列表表示完全通过。
-    """
+    """校验输出目录是否符合 MVP-1 输出协议。"""
     errors: list[str] = []
 
     required_files = mvp1_required_files(profile)
