@@ -56,8 +56,10 @@
 - Q-06: acceptance_check.py metadata 校验——data_source/data_version/parameter_set/universe
 - 新增：最小端到端测试 `test_raw_to_strategy_modules_minimal_end_to_end_flow`
 - 新增：`execute_sell()` 函数（含佣金、印花税、滑点）
+- 新增：universe.py 一字涨停 / 一字跌停判断已统一为 `open == high == low == close == limit_up/limit_down`
+- 保留测试：`test_buy_restricted_only_for_one_word_limit_up`、`test_sell_deferred_only_for_one_word_limit_down`
 - 新增：`SellResult` 数据类
 
 ## 仍未完成问题
 
-- universe.py `_is_buy_restricted` 和 `_is_sell_deferred` 使用简化的涨停/跌停判断，后续需统一为一字涨停/跌停判断。
+- 暂无已确认质量阻塞项。后续进入新阶段前仍需先创建任务分支和 PR，并由验收验证独立 review。

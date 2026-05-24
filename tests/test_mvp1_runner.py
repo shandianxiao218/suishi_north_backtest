@@ -204,6 +204,30 @@ def test_run_mvp1_from_raw_snapshot_returns_dataset(tmp_path: Path) -> None:
     assert len(data_set.sensitivity) >= 2, "sensitivity 至少 baseline + 一个扰动"
 
 
+def test_raw_runner_benchmark_comparison_uses_sample_windows(
+    tmp_path: Path,
+) -> None:
+    """benchmark_comparison.csv 必须按样本区间独立计算，不能复制全周期数字。"""
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+    _build_raw_snapshot(snapshot_dir)
+
+    config = _make_config(snapshot_dir, tmp_path / "output")
+    data_set = run_mvp1_from_raw_snapshot(snapshot_dir, config)
+
+    csi300_rows = {
+        row["period"]: row
+        for row in data_set.benchmark_comparison
+        if row["benchmark"] == "CSI300"
+    }
+
+    assert set(csi300_rows) == {"sample_in", "sample_out", "recent"}
+    assert csi300_rows["sample_in"]["strategy_return"] != csi300_rows["recent"]["strategy_return"]
+    assert csi300_rows["sample_in"]["benchmark_return"] != csi300_rows["recent"]["benchmark_return"]
+    for row in csi300_rows.values():
+        assert "window=[" in str(row["audit_note"])
+
+
 def test_raw_runner_can_write_mvp1_output_dir(tmp_path: Path) -> None:
     """raw runner 能写标准 MVP-1 输出目录，所有文件存在且 metadata 一致。"""
     snapshot_dir = tmp_path / "raw-snapshot"
