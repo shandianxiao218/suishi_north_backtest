@@ -126,6 +126,8 @@ def run_portfolio_lifecycle(
     current_positions: dict[str, OpenPosition] = {}
     highest_close_map: dict[str, float] = {}
     pending_exits: dict[str, tuple[str, str]] = {}  # sym -> (exit_signal_date, exit_reason_str)
+    pending_buys: dict[str, list[tuple[CandidateSignal, StockDaily]]] = {}  # entry_date -> [(candidate, entry_bar)]
+    reserved_symbols: set[str] = set()
 
     # ---- 结果容器 ----
     trades: list[ClosedTrade] = []
@@ -236,32 +238,10 @@ def run_portfolio_lifecycle(
             del current_positions[sym]
 
         # ================================================================
-        # Phase 2: 处理当日候选（signal_date == date）
+        # Phase 1.5: 执行当日 pending buys（entry_bar.trade_date == date）
         # ================================================================
-        for cand, score in candidates_by_date.get(date, []):
-            week_key = cand.signal_date[:7]
-            actions = select_candidates(
-                candidates=[cand],
-                current_holdings=list(current_positions.keys()),
-                opened_today=opened_today_by_date.get(cand.signal_date, 0),
-                opened_this_week=opened_week_by_key.get(week_key, 0),
-                parameters=parameters,
-            )
-            open_action = _first_open_action(actions)
-            if open_action is None:
-                skipped_rows.extend(_skip_rows_from_actions(actions, track_name))
-                continue
-
-            # T+1 买入
-            sym_bars = bars_by_symbol.get(cand.symbol, [])
-            entry_bar = _next_bar_after(sym_bars, cand.signal_date)
-            if entry_bar is None:
-                skipped_rows.append(_skip_row(cand, "缺少 T+1 买入行情，无法成交", track_name))
-                continue
-
-            # 计算当前权益（用于仓位管理）
+        for cand, entry_bar in pending_buys.pop(date, []):
             current_equity = _compute_equity(cash, current_positions, bars_by_symbol, date)
-
             buy = execute_buy(
                 candidate=cand,
                 open_price=entry_bar.open,
@@ -275,12 +255,12 @@ def run_portfolio_lifecycle(
             )
             if not buy.executed:
                 skipped_rows.append(_skip_row(cand, buy.skip_reason, track_name))
+                reserved_symbols.discard(cand.symbol)
                 continue
 
             old_cash = cash
             cash = buy.cash_remaining
-            opened_today_by_date[cand.signal_date] = opened_today_by_date.get(cand.signal_date, 0) + 1
-            opened_week_by_key[week_key] = opened_week_by_key.get(week_key, 0) + 1
+            reserved_symbols.discard(cand.symbol)
 
             position = OpenPosition(
                 symbol=cand.symbol,
@@ -299,7 +279,7 @@ def run_portfolio_lifecycle(
 
             cash_ledger.append({
                 "event": "buy_cash_outflow",
-                "date": entry_bar.trade_date,
+                "date": date,
                 "symbol": cand.symbol,
                 "amount": round(old_cash - cash, 2),
                 "cash_after": round(cash, 2),
@@ -307,12 +287,44 @@ def run_portfolio_lifecycle(
             })
             position_ledger.append({
                 "event": "open_position",
-                "date": entry_bar.trade_date,
+                "date": date,
                 "symbol": cand.symbol,
                 "shares": buy.shares,
                 "entry_price": float(buy.entry_price or 0.0),
                 "track": track_name,
             })
+
+        # ================================================================
+        # Phase 2: 处理当日候选（signal_date == date，只创建 pending buy）
+        # ================================================================
+        for cand, score in candidates_by_date.get(date, []):
+            week_key = cand.signal_date[:7]
+            all_held = list(current_positions.keys()) + sorted(
+                reserved_symbols - set(current_positions.keys())
+            )
+            actions = select_candidates(
+                candidates=[cand],
+                current_holdings=all_held,
+                opened_today=opened_today_by_date.get(cand.signal_date, 0),
+                opened_this_week=opened_week_by_key.get(week_key, 0),
+                parameters=parameters,
+            )
+            open_action = _first_open_action(actions)
+            if open_action is None:
+                skipped_rows.extend(_skip_rows_from_actions(actions, track_name))
+                continue
+
+            sym_bars = bars_by_symbol.get(cand.symbol, [])
+            entry_bar = _next_bar_after(sym_bars, cand.signal_date)
+            if entry_bar is None:
+                skipped_rows.append(_skip_row(cand, "缺少 T+1 买入行情，无法成交", track_name))
+                continue
+
+            # 仅记录 pending buy，不扣现金、不建仓
+            reserved_symbols.add(cand.symbol)
+            pending_buys.setdefault(entry_bar.trade_date, []).append((cand, entry_bar))
+            opened_today_by_date[cand.signal_date] = opened_today_by_date.get(cand.signal_date, 0) + 1
+            opened_week_by_key[week_key] = opened_week_by_key.get(week_key, 0) + 1
 
         # ================================================================
         # Phase 3: 检测持仓退出信号（基于当日 bar）
@@ -377,6 +389,12 @@ def run_portfolio_lifecycle(
         })
 
     # ---- 收尾 ----
+    # 清理未执行的 pending buys
+    for _entry_date, buys in pending_buys.items():
+        for cand, _entry_bar in buys:
+            skipped_rows.append(_skip_row(cand, "T+1 买入日超出回测区间", track_name))
+            reserved_symbols.discard(cand.symbol)
+
     cash_ledger.append({
         "event": "ending_cash",
         "date": run_config.end_date,

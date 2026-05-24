@@ -288,6 +288,63 @@ class TestLifecycleCashNeverNegative:
 class TestLifecycleDailyMarkToMarket:
     """权益曲线每日盯市。"""
 
+    def test_lifecycle_does_not_mark_pending_buy_as_position_on_signal_date(self) -> None:
+        """信号日不应扣现金、不应建仓；entry_date 才出现 buy 和 open_position。"""
+        candidate = _candidate(signal_date="2024-01-10", c_price=1.0)
+        bars = [
+            _bar("2024-01-10", close=10.0),
+            _bar("2024-01-11", open=10.5, close=10.8),
+        ]
+        result = run_portfolio_lifecycle(
+            scored_candidates=[(candidate, 50.0)],
+            bars_by_symbol={"000001": bars},
+            run_config=PortfolioRunConfig(
+                track_name="test",
+                initial_cash=1_000_000,
+                start_date="2024-01-01",
+                end_date="2024-01-20",
+            ),
+            parameters=_params(
+                emergency_stop_pct=0.5,
+                trend_exit_pct=0.5,
+                time_stop_days=30,
+                max_holding_days=30,
+            ),
+        )
+
+        # 信号日权益应等于初始资金（尚未买入）
+        equity_by_date = {p["date"]: float(p["equity"]) for p in result.equity_curve}
+        assert equity_by_date.get("2024-01-10") == 1_000_000.0, (
+            f"信号日权益应为初始资金，实际：{equity_by_date.get('2024-01-10')}"
+        )
+
+        # 信号日 position_ledger 不应有 000001 的任何事件
+        signal_date_events = [
+            e for e in result.position_ledger
+            if e.get("date") == "2024-01-10" and e.get("symbol") == "000001"
+        ]
+        assert len(signal_date_events) == 0, (
+            f"信号日不应有持仓事件，实际：{signal_date_events}"
+        )
+
+        # entry_date (01-11) 才出现 buy_cash_outflow
+        cash_events_01_11 = [
+            e for e in result.cash_ledger
+            if e.get("date") == "2024-01-11" and e.get("event") == "buy_cash_outflow"
+        ]
+        assert len(cash_events_01_11) >= 1, (
+            f"01-11 应有 buy_cash_outflow，实际：{result.cash_ledger}"
+        )
+
+        # entry_date (01-11) 才出现 open_position
+        pos_events_01_11 = [
+            e for e in result.position_ledger
+            if e.get("date") == "2024-01-11" and e.get("event") == "open_position"
+        ]
+        assert len(pos_events_01_11) >= 1, (
+            f"01-11 应有 open_position，实际：{result.position_ledger}"
+        )
+
     def test_equity_curve_has_start_and_end(self) -> None:
         candidate = _candidate(signal_date="2024-01-10")
         bars = [
