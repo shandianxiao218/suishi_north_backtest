@@ -5,9 +5,22 @@
 ## 交流语言
 
 本项目默认使用中文交流、中文文档和中文 issue 描述。代码命名可以使用英文，但领域术语、策略说明、回测报告和架构决策优先使用中文。
+
 ## github
 
 GitHub 写操作改成 阶段批处理模式，尽量减少点确认的次数。
+
+## 与 Claude Code 的协作方式
+
+当需要让 Claude Code 修改代码、修 PR、补测试或执行验收整改时，必须优先使用 GitHub issue / PR Conversation 的 checklist 方式交流，而不是只在聊天中口头说明。
+
+协作要求：
+
+- 将整改意见写成清晰的 issue-style checklist，包含背景、目标、必须整改项、测试要求和提交要求。
+- 每个 checklist item 必须可验证、可勾选，避免含糊表述。
+- 对 PR review 发现的问题，优先发布到对应 PR 的 Conversation；如是新任务，优先创建或更新 GitHub Issue。
+- 指示 Claude Code 时要明确：不要自行合并，完成后回填完整测试输出，等待 review。
+- 新对话中如果用户要求“让 Claude 改”“给 Claude 指示”“按 issue 的方式交流”，默认按本节执行。
 
 ## Agent skills
 
