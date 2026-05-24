@@ -9,6 +9,19 @@
 
 GitHub 写操作改成 阶段批处理模式，尽量减少点确认的次数。
 
+## 与 Claude Code 的 issue 式沟通
+
+与 Claude Code 进行实现、整改、验收或返工沟通时，默认采用 GitHub issue / PR checklist 的方式，而不是只在聊天里给口头意见。
+
+执行要求：
+
+- 先定位对应 issue 或 PR；没有对应 issue 时，先创建或建议创建清晰 issue。
+- 将指示写成可执行 checklist，包含背景、目标、范围、必须整改项、测试命令、验收标准和禁止事项。
+- 对 PR review 整改，优先发到对应 PR Conversation；需要更细粒度时再使用 inline review comment。
+- 明确要求 Claude Code 在同一个 issue / PR 中回填完整测试输出、风险与边界、未完成事项。
+- 对范围外发现，只要求记录到 issue / PR / handoff，不允许顺手扩大当前 PR 范围。
+- 每次新对话恢复上下文时，先查看 `AGENTS.md` 并沿用本节的 issue 式沟通规则。
+
 ## Agent skills
 
 ### Issue tracker
