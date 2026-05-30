@@ -188,8 +188,12 @@ def create_snapshot(root: Path, name: str) -> Path:
     )
     write_csv(
         snapshot_dir / "benchmark_comparison.csv",
-        ["period", "benchmark", "strategy_return", "benchmark_return", "excess_return",
-         "max_drawdown", "return_drawdown_ratio", "audit_note"],
+        ["period", "benchmark", "strategy_return", "strategy_max_drawdown",
+         "strategy_annualized_return", "strategy_volatility", "strategy_win_rate",
+         "strategy_trade_count", "strategy_return_drawdown_ratio", "benchmark_return",
+         "benchmark_max_drawdown", "benchmark_annualized_return", "benchmark_volatility",
+         "benchmark_return_drawdown_ratio", "excess_return", "benchmark_status",
+         "audit_note"],
         [],
     )
     write_csv(
