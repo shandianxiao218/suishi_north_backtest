@@ -21,6 +21,10 @@ from suishi_north_backtest.raw_data import validate_raw_snapshot
 from suishi_north_backtest.scoring import ScoringContext, ScoreBreakdown, score_candidate
 from suishi_north_backtest.signals import CandidateSignal, find_candidates
 from suishi_north_backtest.tracks import Track, build_mainline_map
+from suishi_north_backtest.sensitivity import (
+    create_parameter_variants,
+    sensitivity_result_to_rows,
+)
 
 
 BENCHMARK_CODE_TO_NAME = {
@@ -572,6 +576,12 @@ def _real_track_rows(
 
 
 def _sensitivity_rows(total_return: float) -> list[dict[str, object]]:
+    """敏感性分析占位符函数。
+
+    注意：此函数已由 sensitivity.py 中的真实参数扰动回测替代。
+    生产环境中应使用 sensitivity.run_sensitivity_analysis 和 sensitivity.sensitivity_result_to_rows。
+    此函数仅用于向后兼容和简化测试。
+    """
     return [
         {
             "parameter": "baseline",
@@ -581,17 +591,17 @@ def _sensitivity_rows(total_return: float) -> list[dict[str, object]]:
             "sample_out_metric": f"{total_return * 100:.2f}",
             "overfit_risk": "not_evaluated",
             "accepted": "true",
-            "audit_note": "raw snapshot baseline result",
+            "audit_note": "placeholder - use sensitivity.run_sensitivity_analysis for real analysis",
         },
         {
-            "parameter": "ab_min_gain",
+            "parameter": "ab_min_gain_pct",
             "baseline_value": "20%",
             "variant_value": "25%",
             "sample_in_metric": f"{total_return * 100:.2f}",
             "sample_out_metric": f"{total_return * 100:.2f}",
             "overfit_risk": "not_evaluated",
             "accepted": "false",
-            "audit_note": "raw snapshot sensitivity placeholder-free perturbation record",
+            "audit_note": "placeholder - use sensitivity.run_sensitivity_analysis for real analysis",
         },
     ]
 
