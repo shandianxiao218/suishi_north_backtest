@@ -184,9 +184,6 @@ def _split_equity_by_period(
             # 更新起点为更接近 period_start 的点
             start_equity = equity
         elif period_start < date <= period_end:
-            # 在区间内,如果没有终点则设置
-            if end_equity is None:
-                end_equity = equity
             # 始终更新终点为最新的点
             end_equity = equity
 
