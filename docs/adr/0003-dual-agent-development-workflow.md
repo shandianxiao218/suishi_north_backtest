@@ -1,95 +1,77 @@
-# ADR-0003：双 Agent 协作开发流程
+# ADR-0003：Subagent 驱动开发流程
 
 ## 状态
 
-已接受
+已接受（2026-05-30 更新，替代原双 Agent tmux 方案）
 
 ## 背景
 
 本仓库需要一种可复现的开发流程，让 AI agent 能够自主完成从规划到实现到 review 的完整闭环，减少人工中转。
 
+原方案使用两个独立 pi agent 实例通过 tmux + 完成标记协议协作。现改为单 orchestrator + subagent 模式，由一个主 agent 统一调度 worker、reviewer 等 subagent 角色，减少 tmux 启动开销和标记协议复杂度。
+
 ## 决策
 
-采用两个 pi agent 实例，不同模型，不同角色，通过 tmux + pi extension 协作：
+采用单 orchestrator + pi-subagents 协作：
 
-| 角色 | 代号 | 默认模型 | 职责 |
-|---|---|---|---|
-| 规划 + review agent | 架构师 (architect) | GLM-5.1 | 策略方向决策、工程拆分为 issue、review PR、合并 PR |
-| 实现 + 执行 agent | 码农 (coder) | GLM-4.7 | 领 issue、写代码、跑测试、提 PR、响应 review 意见 |
+| 角色 | 实现方式 | 职责 |
+|---|---|---|
+| 架构师 (orchestrator) | 主 pi agent 会话 | 策略方向决策、工程拆分为 issue、调度 subagent、review 结果、合并 PR |
+| worker | `subagent(agent="worker")` | 实现 issue、跑测试、提 PR |
+| reviewer | `subagent(agent="reviewer")` | 代码审查 |
+| scout | `subagent(agent="scout")` | 代码侦察 |
 
 ### 工作流程
 
 ```
-人类 ↔ 5.1 对话
+人类 ↔ 架构师（主会话）
        ↓
-5.1 规划 → 拆 issue (ready-for-agent)
+架构师用 scout 侦察代码现状
        ↓
-5.1 (架构师) 通过 tmux 启动 4.7 (码农)
+架构师整理实现计划
        ↓
-码农领 issue → 写代码 → 跑测试 → 提 PR
+🚨 人类确认计划（重大决策才需要）
        ↓
-码农输出完成标记
+架构师派 worker(async) 实现 → 跑测试 → 报告 handoff
        ↓
-架构师检测标记 → 自动 review PR
-       ├── 通过 → 合并
-       └── 不通过 → 写 review comments
-                      ↓
-              码农读评论 → 改代码 → 重推
-                      ↓
-              架构师重新 review → ... → 合并
+架构师审查 handoff → 决定是否进 review
        ↓
-架构师汇报结果给人类
+架构师派并行 reviewer(async, fresh context) 审查
+       ↓
+架构师汇总审查结果
+       ├── 严重问题 → 🚨 找人类决策
+       ├── 一般问题 → 派 worker(async) 修复 → 重新 review
+       └── 通过 → 合并分支、关闭 issue
 ```
 
-### 操舵模型升级机制
+### 确认门控
 
-码农进程失败或连续两次 review 不通过时，架构师自动将码农的模型从 GLM-4.7 升级到 GLM-5.1 重做：
+| 门 | 触发条件 | 谁决定 |
+|---|---|---|
+| 计划确认 | 每个新 issue 开始前 | 🚨 人类确认 |
+| 重大决策 | 策略逻辑理解不确定、实现方向有两个合理选项、reviewer 发现 issue 之外的问题 | 🚨 人类确认 |
+| 实现确认 | worker 完成后 | 架构师自行决定 |
+| 审查决策 | reviewer 完成后 | 架构师自行决定，严重问题才升级 |
 
-```
-架构师 review PR
-  ├── 通过 → 合并
-  ├── 不通过（第 1 次）→ 写 review comments → 码农改代码 → 重推 → 架构师重新 review
-  │     ├── 通过 → 合并
-  │     └── 不通过（第 2 次）→ 升级码农模型为 GLM-5.1 → 从头重做该 issue
-  │           ├── 通过 → 合并，后续 issue 码农降回 GLM-4.7
-  │           └── 不通过 → 通知人类介入
+### 模型升级机制
 
-码农进程失败（无完成标记 / 退出码非零）
-  └── 升级码农模型为 GLM-5.1 → 从头重做该 issue
-        ├── 通过 → 合并，后续 issue 码农降回 GLM-4.7
-        └── 不通过 → 通知人类介入
-```
+worker 默认使用项目默认模型。当 worker 连续失败或 reviewer 连续两次发现 blocker 时，架构师可将后续 worker 的 model 参数升级为更强模型（如 GLM-5-Turbo）重做。升级只针对当前 issue，下一个 issue 自动降回默认模型。
 
-升级只针对当前 issue，下一个 issue 码农自动降回 GLM-4.7。
+### 完成标记
 
-升级标记：
-```
-::AGENT-DONE::SUISHI-NORTH::issue=<编号>::pr=<PR编号>::status=success::model=glm-4.7
-::AGENT-DONE::SUISHI-NORTH::issue=<编号>::pr=<PR编号>::status=success::model=glm-5.1
-```
-
-架构师通过 model 字段追踪码农当前使用的模型，决定是否需要升级或降回。
-
-### 完成标记协议
-
-4.7 完成后在 tmux 输出结构化标记行：
-
-```
-::AGENT-DONE::<项目标识>::issue=<编号>::pr=<PR编号>::status=success
-::AGENT-DONE::<项目标识>::issue=<编号>::status=failed::error=<原因>
-```
-
-项目标识：`SUISHI-NORTH`
-
-泛化时只需更换项目标识段。
+不再使用 tmux 完成标记协议。subagent 运行结果通过 `subagent({ action: "status" })` 直接获取，包含文件变更、测试输出和遗留问题。
 
 ### 技术方案
 
-Extension 放在项目级 `.pi/extensions/` 目录
-- 架构师通过 tmux 启动码农会话
-- 架构师通过 `tmux capture-pane` 监控码农输出，检测 `::AGENT-DONE::` 标记
-- issue 串行执行，一个做完再做下一个
-- 码农的启动指令模板包含：issue 编号、分支名、角色说明、完成标记格式
+使用 pi-subagents 扩展，orchestrator 通过 `subagent(...)` 工具调度：
+- `subagent(agent="scout")` — 代码侦察
+- `subagent(agent="worker", async=true)` — 异步实现
+- `subagent(agent="reviewer", context="fresh")` — 并行审查
+- `subagent({ action: "status", id="..." })` — 检查异步任务状态
+
+分支管理：每个 issue 一个分支 `feat/issue-{N}-{slug}`，worker 在分支上工作，reviewer 通过 `git diff` 审查。
+
+合并使用 `review_pr(action="merge")` 或直接 `gh pr merge --squash`。
 
 ### Review Checklist
 
@@ -124,8 +106,8 @@ Extension 放在项目级 `.pi/extensions/` 目录
 
 ## 后果
 
-- 人类只需与架构师对话，不需要手动在两个 agent 之间中转。
-- Extension 目前是项目级的，泛化到其他项目需要复制并修改项目标识。
-- 串行执行意味着规划拆分粒度影响吞吐——issue 太小则 tmux 启动开销大，太大则单次反馈周期长。
+- 人类只需与架构师对话，subagent 调度完全透明。
+- 不再依赖 tmux 和完成标记协议，减少环境依赖和启动开销。
 - 架构师自动合并 PR 意味着人类信任架构师的 review 质量。如果架构师 review 漏判，错误代码会直接进入主分支。
-- 两次 review 不过后码农升级到 GLM-5-Turbo，是最后的自动恢复手段。GLM-5-Turbo 仍不过则必须人类介入。
+- 严重问题升级到人类，一般问题架构师自行处理，减少人类中转次数。
+- 写操作保持单线程：同一时刻只有一个 worker 在修改代码，避免冲突。
