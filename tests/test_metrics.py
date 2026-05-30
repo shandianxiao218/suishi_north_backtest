@@ -396,9 +396,45 @@ class TestBuildBenchmarkComparisonExactValues:
         row = self._rows_for("CSI300")["sample_in"]
         assert row["strategy_return"] == "20.00"
 
+    def test_csi300_sample_in_strategy_max_drawdown(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["strategy_max_drawdown"] == "0.00"  # 单调递增
+
+    def test_csi300_sample_in_strategy_annualized_return(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["strategy_annualized_return"] == "3.72"  # (1.2)^(365/1825) - 1 = 3.72%
+
+    def test_csi300_sample_in_strategy_volatility(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["strategy_volatility"] == "0.00"  # 只有2点
+
+    def test_csi300_sample_in_strategy_return_drawdown_ratio(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["strategy_return_drawdown_ratio"] == "0.00"  # 0.2 / 0 = 0
+
     def test_csi300_sample_in_benchmark_return(self) -> None:
         row = self._rows_for("CSI300")["sample_in"]
         assert row["benchmark_return"] == "20.00"
+
+    def test_csi300_sample_in_benchmark_max_drawdown(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["benchmark_max_drawdown"] == "0.00"  # 单调递增
+
+    def test_csi300_sample_in_benchmark_annualized_return(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["benchmark_annualized_return"] == "3.72"  # (1.2)^(365/1825) - 1
+
+    def test_csi300_sample_in_benchmark_volatility(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["benchmark_volatility"] == "0.00"  # 只有2点
+
+    def test_csi300_sample_in_benchmark_return_drawdown_ratio(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["benchmark_return_drawdown_ratio"] == "0.00"  # 0.2 / 0 = 0
+
+    def test_csi300_sample_in_excess_return(self) -> None:
+        row = self._rows_for("CSI300")["sample_in"]
+        assert row["excess_return"] == "0.00"  # 20% - 20%
 
     def test_csi300_sample_in_benchmark_status(self) -> None:
         row = self._rows_for("CSI300")["sample_in"]
@@ -418,9 +454,45 @@ class TestBuildBenchmarkComparisonExactValues:
         row = self._rows_for("CSI300")["sample_out"]
         assert row["strategy_return"] == "-1.00"
 
+    def test_csi300_sample_out_strategy_max_drawdown(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["strategy_max_drawdown"] == "10.00"  # 1.2M -> 1.08M = 10% 回撤
+
+    def test_csi300_sample_out_strategy_annualized_return(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["strategy_annualized_return"] == "-0.67"  # -1% 按年化365天计算
+
+    def test_csi300_sample_out_strategy_volatility(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["strategy_volatility"] == "155.56"  # 2点的日波动率
+
+    def test_csi300_sample_out_strategy_return_drawdown_ratio(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["strategy_return_drawdown_ratio"] == "-0.10"  # -0.01 / 0.1
+
     def test_csi300_sample_out_benchmark_return(self) -> None:
         row = self._rows_for("CSI300")["sample_out"]
         assert row["benchmark_return"] == "-0.25"
+
+    def test_csi300_sample_out_benchmark_max_drawdown(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["benchmark_max_drawdown"] == "5.00"  # 3600 -> 3420 = 5% 回撤
+
+    def test_csi300_sample_out_benchmark_annualized_return(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["benchmark_annualized_return"] == "-0.17"  # -0.25% 按年化365天计算
+
+    def test_csi300_sample_out_benchmark_volatility(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["benchmark_volatility"] == "77.78"  # 2点的日波动率
+
+    def test_csi300_sample_out_benchmark_return_drawdown_ratio(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["benchmark_return_drawdown_ratio"] == "-0.05"  # -0.0025 / 0.05
+
+    def test_csi300_sample_out_excess_return(self) -> None:
+        row = self._rows_for("CSI300")["sample_out"]
+        assert row["excess_return"] == "-0.75"  # -1% - (-0.25%)
 
     def test_csi300_sample_out_benchmark_status(self) -> None:
         row = self._rows_for("CSI300")["sample_out"]
@@ -437,9 +509,45 @@ class TestBuildBenchmarkComparisonExactValues:
         row = self._rows_for("CSI300")["recent"]
         assert row["strategy_return"] == "10.00"
 
+    def test_csi300_recent_strategy_max_drawdown(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["strategy_max_drawdown"] == "0.00"  # 单调递增
+
+    def test_csi300_recent_strategy_annualized_return(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["strategy_annualized_return"] == "21.58"  # (1.1)^(365/178) - 1
+
+    def test_csi300_recent_strategy_volatility(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["strategy_volatility"] == "0.00"  # 只有2点
+
+    def test_csi300_recent_strategy_return_drawdown_ratio(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["strategy_return_drawdown_ratio"] == "0.00"  # 0.1 / 0 = 0
+
     def test_csi300_recent_benchmark_return(self) -> None:
         row = self._rows_for("CSI300")["recent"]
         assert row["benchmark_return"] == "5.00"
+
+    def test_csi300_recent_benchmark_max_drawdown(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["benchmark_max_drawdown"] == "0.00"  # 单调递增
+
+    def test_csi300_recent_benchmark_annualized_return(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["benchmark_annualized_return"] == "10.52"  # (1.05)^(365/178) - 1
+
+    def test_csi300_recent_benchmark_volatility(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["benchmark_volatility"] == "0.00"  # 只有2点
+
+    def test_csi300_recent_benchmark_return_drawdown_ratio(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["benchmark_return_drawdown_ratio"] == "0.00"  # 0.05 / 0 = 0
+
+    def test_csi300_recent_excess_return(self) -> None:
+        row = self._rows_for("CSI300")["recent"]
+        assert row["excess_return"] == "5.00"  # 10% - 5%
 
     def test_csi300_recent_benchmark_status(self) -> None:
         row = self._rows_for("CSI300")["recent"]
@@ -469,6 +577,60 @@ class TestBuildBenchmarkComparisonExactValues:
         assert row["benchmark_return"] == "5.00"
         assert row["benchmark_status"] == "ok"
 
+    # --- CSI500 sample_in: 5000 -> 5500 = +10% ---
+
+    def test_csi500_sample_in_benchmark_max_drawdown(self) -> None:
+        row = self._rows_for("CSI500")["sample_in"]
+        assert row["benchmark_max_drawdown"] == "0.00"
+
+    def test_csi500_sample_in_benchmark_annualized_return(self) -> None:
+        row = self._rows_for("CSI500")["sample_in"]
+        assert row["benchmark_annualized_return"] == "1.93"  # (1.1)^(365/1825) - 1
+
+    def test_csi500_sample_in_benchmark_volatility(self) -> None:
+        row = self._rows_for("CSI500")["sample_in"]
+        assert row["benchmark_volatility"] == "0.00"  # 只有2点
+
+    def test_csi500_sample_in_benchmark_return_drawdown_ratio(self) -> None:
+        row = self._rows_for("CSI500")["sample_in"]
+        assert row["benchmark_return_drawdown_ratio"] == "0.00"  # 0.1 / 0 = 0
+
+    # --- CSI500 sample_out: 5500 -> 4675 = -15% ---
+
+    def test_csi500_sample_out_benchmark_max_drawdown(self) -> None:
+        row = self._rows_for("CSI500")["sample_out"]
+        assert row["benchmark_max_drawdown"] == "15.00"  # 5500->4675, 回撤15%
+
+    def test_csi500_sample_out_benchmark_annualized_return(self) -> None:
+        row = self._rows_for("CSI500")["sample_out"]
+        assert row["benchmark_annualized_return"] == "-7.36"  # -15% 按年化365天计算
+
+    def test_csi500_sample_out_benchmark_volatility(self) -> None:
+        row = self._rows_for("CSI500")["sample_out"]
+        assert row["benchmark_volatility"] == "161.92"  # 2点的日波动率
+
+    def test_csi500_sample_out_benchmark_return_drawdown_ratio(self) -> None:
+        row = self._rows_for("CSI500")["sample_out"]
+        assert row["benchmark_return_drawdown_ratio"] == "-0.72"  # -0.15 / 0.15 ≈ -1
+
+    # --- CSI500 recent: 4675 -> 4908.75 = +5% ---
+
+    def test_csi500_recent_benchmark_max_drawdown(self) -> None:
+        row = self._rows_for("CSI500")["recent"]
+        assert row["benchmark_max_drawdown"] == "0.00"
+
+    def test_csi500_recent_benchmark_annualized_return(self) -> None:
+        row = self._rows_for("CSI500")["recent"]
+        assert row["benchmark_annualized_return"] == "10.52"  # (1.05)^(365/178) - 1
+
+    def test_csi500_recent_benchmark_volatility(self) -> None:
+        row = self._rows_for("CSI500")["recent"]
+        assert row["benchmark_volatility"] == "0.00"  # 只有2点
+
+    def test_csi500_recent_benchmark_return_drawdown_ratio(self) -> None:
+        row = self._rows_for("CSI500")["recent"]
+        assert row["benchmark_return_drawdown_ratio"] == "0.00"  # 0.05 / 0 = 0
+
     # --- CSI1000：只有 sample_in 有数据 ---
 
     def test_csi1000_sample_in_ok(self) -> None:
@@ -476,14 +638,38 @@ class TestBuildBenchmarkComparisonExactValues:
         assert row["benchmark_return"] == "20.00"
         assert row["benchmark_status"] == "ok"
 
+    def test_csi1000_sample_in_benchmark_max_drawdown(self) -> None:
+        row = self._rows_for("CSI1000")["sample_in"]
+        assert row["benchmark_max_drawdown"] == "0.00"
+
+    def test_csi1000_sample_in_benchmark_annualized_return(self) -> None:
+        row = self._rows_for("CSI1000")["sample_in"]
+        assert row["benchmark_annualized_return"] == "3.72"  # (1.2)^(365/1825) - 1
+
+    def test_csi1000_sample_in_benchmark_volatility(self) -> None:
+        row = self._rows_for("CSI1000")["sample_in"]
+        assert row["benchmark_volatility"] == "0.00"  # 只有2点
+
+    def test_csi1000_sample_in_benchmark_return_drawdown_ratio(self) -> None:
+        row = self._rows_for("CSI1000")["sample_in"]
+        assert row["benchmark_return_drawdown_ratio"] == "0.00"  # 0.2 / 0 = 0
+
     def test_csi1000_sample_out_insufficient(self) -> None:
         row = self._rows_for("CSI1000")["sample_out"]
         assert row["benchmark_return"] == "0.00"
+        assert row["benchmark_max_drawdown"] == "0.00"
+        assert row["benchmark_annualized_return"] == "0.00"
+        assert row["benchmark_volatility"] == "0.00"
+        assert row["benchmark_return_drawdown_ratio"] == "0.00"
         assert row["benchmark_status"] == "insufficient_data"
 
     def test_csi1000_recent_insufficient(self) -> None:
         row = self._rows_for("CSI1000")["recent"]
         assert row["benchmark_return"] == "0.00"
+        assert row["benchmark_max_drawdown"] == "0.00"
+        assert row["benchmark_annualized_return"] == "0.00"
+        assert row["benchmark_volatility"] == "0.00"
+        assert row["benchmark_return_drawdown_ratio"] == "0.00"
         assert row["benchmark_status"] == "insufficient_data"
 
     # --- 三个 period 策略指标独立计算 ---
