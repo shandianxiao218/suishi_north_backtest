@@ -572,26 +572,31 @@ def _real_track_rows(
 
 
 def _sensitivity_rows(total_return: float) -> list[dict[str, object]]:
+    """生成敏感性分析占位符行。
+    
+    注意：这只是占位符数据。要进行真实的敏感性分析，
+    请使用 suishi_north_backtest.sensitivity.run_sensitivity_analysis。
+    """
     return [
         {
             "parameter": "baseline",
-            "baseline_value": "ADR-0002",
-            "variant_value": "ADR-0002",
+            "baseline_value": "ADR-0002-defaults",
+            "variant_value": "ADR-0002-defaults",
             "sample_in_metric": f"{total_return * 100:.2f}",
             "sample_out_metric": f"{total_return * 100:.2f}",
             "overfit_risk": "not_evaluated",
             "accepted": "true",
-            "audit_note": "raw snapshot baseline result",
+            "audit_note": "baseline result from single backtest run. For real sensitivity analysis with parameter perturbations, use sensitivity.py module",
         },
         {
-            "parameter": "ab_min_gain",
-            "baseline_value": "20%",
-            "variant_value": "25%",
+            "parameter": "ab_min_gain_pct",
+            "baseline_value": "0.20",
+            "variant_value": "0.25",
             "sample_in_metric": f"{total_return * 100:.2f}",
             "sample_out_metric": f"{total_return * 100:.2f}",
             "overfit_risk": "not_evaluated",
             "accepted": "false",
-            "audit_note": "raw snapshot sensitivity placeholder-free perturbation record",
+            "audit_note": "placeholder. Use sensitivity.py module for real perturbation backtests",
         },
     ]
 
