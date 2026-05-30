@@ -273,13 +273,11 @@ def test_sensitivity_flags_sample_in_improves_sample_out_worsens(tmp_path: Path)
 
     baseline_params = default_mvp1_parameters()
 
-    # 创建一个可能过拟合的 variant（更严格的参数）
+    # 创建一个可能过拟合的 variant（只改一个参数）
     overfit_variant = replace(
         baseline_params,
-        name="overfit-risk-test",
+        name="bc_max_retracement-50pct",
         bc_max_retracement_pct=0.50,  # 更严格的 BC 回撤限制
-        c_window_min_days=5,  # 更窄的 C 点窗口
-        c_window_max_days=15,
     )
 
     config = BacktestConfig(
@@ -476,3 +474,24 @@ def test_split_equity_by_period() -> None:
     assert abs(sample_out_return - 0.0455) < 0.001, (
         f"样本外收益应为 4.55%，实际：{sample_out_return * 100:.2f}%"
     )
+
+
+def test_assess_overfit_risk_all_branches() -> None:
+    """测试 _assess_overfit_risk 的 high/medium/low 分支。"""
+    from suishi_north_backtest.sensitivity import _assess_overfit_risk
+
+    # high: 样本内改善 >5% 且样本外恶化 >5%
+    assert _assess_overfit_risk(0.20, -0.10, 0.10, 0.05) == "high"
+
+    # medium: 样本内改善且样本外恶化，但差值 <=5%
+    assert _assess_overfit_risk(0.12, 0.04, 0.10, 0.05) == "medium"
+
+    # low: 样本内改善且样本外也改善
+    assert _assess_overfit_risk(0.15, 0.10, 0.10, 0.05) == "low"
+
+    # low: 样本内恶化
+    assert _assess_overfit_risk(0.05, 0.03, 0.10, 0.05) == "low"
+
+    # None: 任一输入为 None
+    assert _assess_overfit_risk(None, 0.10, 0.10, 0.05) is None
+    assert _assess_overfit_risk(0.10, None, 0.10, 0.05) is None
