@@ -43,16 +43,21 @@
 
 ### 操舵模型升级机制
 
-同一 issue 连续两次 review 不通过时，架构师自动将码农的模型从 GLM-4.7 升级到 GLM-5-Turbo 重做：
+码农进程失败或连续两次 review 不通过时，架构师自动将码农的模型从 GLM-4.7 升级到 GLM-5.1 重做：
 
 ```
 架构师 review PR
   ├── 通过 → 合并
   ├── 不通过（第 1 次）→ 写 review comments → 码农改代码 → 重推 → 架构师重新 review
   │     ├── 通过 → 合并
-  │     └── 不通过（第 2 次）→ 升级码农模型为 GLM-5-Turbo → 从头重做该 issue
+  │     └── 不通过（第 2 次）→ 升级码农模型为 GLM-5.1 → 从头重做该 issue
   │           ├── 通过 → 合并，后续 issue 码农降回 GLM-4.7
   │           └── 不通过 → 通知人类介入
+
+码农进程失败（无完成标记 / 退出码非零）
+  └── 升级码农模型为 GLM-5.1 → 从头重做该 issue
+        ├── 通过 → 合并，后续 issue 码农降回 GLM-4.7
+        └── 不通过 → 通知人类介入
 ```
 
 升级只针对当前 issue，下一个 issue 码农自动降回 GLM-4.7。
@@ -60,7 +65,7 @@
 升级标记：
 ```
 ::AGENT-DONE::SUISHI-NORTH::issue=<编号>::pr=<PR编号>::status=success::model=glm-4.7
-::AGENT-DONE::SUISHI-NORTH::issue=<编号>::pr=<PR编号>::status=success::model=glm-5-turbo
+::AGENT-DONE::SUISHI-NORTH::issue=<编号>::pr=<PR编号>::status=success::model=glm-5.1
 ```
 
 架构师通过 model 字段追踪码农当前使用的模型，决定是否需要升级或降回。
