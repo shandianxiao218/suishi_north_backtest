@@ -1,0 +1,2 @@
+﻿signal_date,track,symbol,industry_level2,is_strong_mainline,a_date,a_price,b_date,b_price,c_date,c_price,ab_gain_pct,bc_retracement_pct,distance_to_c_low_pct,weekly_filter_passed,annual_filter_passed,score,audit_note
+2024-01-02,mainline_filtered,000001.SZ,fixture_bank_level2,true,2023-12-20,8.00,2023-12-28,10.40,2024-01-02,9.60,30.00,33.33,4.17,true,true,88.5,deterministic fixture candidate generated with as-of date 2024-01-02

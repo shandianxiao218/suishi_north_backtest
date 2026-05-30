@@ -1,0 +1,10 @@
+﻿period,benchmark,strategy_return,benchmark_return,excess_return,max_drawdown,return_drawdown_ratio,audit_note
+sample_in,CSI300,-19.92,0.00,-19.92,19.92,-1.00,raw snapshot benchmark comparison
+sample_in,CSI500,-19.92,0.00,-19.92,19.92,-1.00,raw snapshot benchmark comparison
+sample_in,CSI1000,-19.92,0.00,-19.92,19.92,-1.00,raw snapshot benchmark comparison
+sample_out,CSI300,-19.92,0.00,-19.92,19.92,-1.00,raw snapshot benchmark comparison
+sample_out,CSI500,-19.92,0.00,-19.92,19.92,-1.00,raw snapshot benchmark comparison
+sample_out,CSI1000,-19.92,0.00,-19.92,19.92,-1.00,raw snapshot benchmark comparison
+recent,CSI300,-19.92,0.00,-19.92,19.92,-1.00,raw snapshot benchmark comparison
+recent,CSI500,-19.92,0.00,-19.92,19.92,-1.00,raw snapshot benchmark comparison
+recent,CSI1000,-19.92,0.00,-19.92,19.92,-1.00,raw snapshot benchmark comparison

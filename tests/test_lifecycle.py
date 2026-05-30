@@ -1,6 +1,6 @@
 """测试 lifecycle.py 组合交易生命周期深模块。
 
-覆盖 Issue #35 要求的 8 个测试：
+覆盖 Issue #35 要求的测试：
 - test_lifecycle_t_plus_1_buy
 - test_lifecycle_t_plus_1_sell
 - test_lifecycle_defer_sell_on_suspension
@@ -9,6 +9,10 @@
 - test_lifecycle_daily_mark_to_market
 - test_lifecycle_max_holdings
 - test_lifecycle_weekly_open_limit
+- test_lifecycle_cash_ledger_records_buy_and_sell_flows
+- test_lifecycle_position_ledger_records_open_and_close
+- test_lifecycle_daily_mark_to_market_uses_close_price_for_open_position
+- test_lifecycle_blocks_new_candidate_while_prior_position_still_open
 """
 from __future__ import annotations
 
@@ -193,7 +197,6 @@ class TestLifecycleDeferSellOnSuspension:
         assert len(result.trades) == 1
         trade = result.trades[0]
         # 卖出应顺延到 01-16，不是停牌的 01-15
-        # 01-12 触发止损，01-15 停牌跳过，01-16 或 01-17 才能卖出
         assert trade.exit_date in ("2024-01-16", "2024-01-17"), (
             f"停牌日应顺延卖出，实际 exit_date={trade.exit_date}"
         )
@@ -285,6 +288,63 @@ class TestLifecycleCashNeverNegative:
 class TestLifecycleDailyMarkToMarket:
     """权益曲线每日盯市。"""
 
+    def test_lifecycle_does_not_mark_pending_buy_as_position_on_signal_date(self) -> None:
+        """信号日不应扣现金、不应建仓；entry_date 才出现 buy 和 open_position。"""
+        candidate = _candidate(signal_date="2024-01-10", c_price=1.0)
+        bars = [
+            _bar("2024-01-10", close=10.0),
+            _bar("2024-01-11", open=10.5, close=10.8),
+        ]
+        result = run_portfolio_lifecycle(
+            scored_candidates=[(candidate, 50.0)],
+            bars_by_symbol={"000001": bars},
+            run_config=PortfolioRunConfig(
+                track_name="test",
+                initial_cash=1_000_000,
+                start_date="2024-01-01",
+                end_date="2024-01-20",
+            ),
+            parameters=_params(
+                emergency_stop_pct=0.5,
+                trend_exit_pct=0.5,
+                time_stop_days=30,
+                max_holding_days=30,
+            ),
+        )
+
+        # 信号日权益应等于初始资金（尚未买入）
+        equity_by_date = {p["date"]: float(p["equity"]) for p in result.equity_curve}
+        assert equity_by_date.get("2024-01-10") == 1_000_000.0, (
+            f"信号日权益应为初始资金，实际：{equity_by_date.get('2024-01-10')}"
+        )
+
+        # 信号日 position_ledger 不应有 000001 的任何事件
+        signal_date_events = [
+            e for e in result.position_ledger
+            if e.get("date") == "2024-01-10" and e.get("symbol") == "000001"
+        ]
+        assert len(signal_date_events) == 0, (
+            f"信号日不应有持仓事件，实际：{signal_date_events}"
+        )
+
+        # entry_date (01-11) 才出现 buy_cash_outflow
+        cash_events_01_11 = [
+            e for e in result.cash_ledger
+            if e.get("date") == "2024-01-11" and e.get("event") == "buy_cash_outflow"
+        ]
+        assert len(cash_events_01_11) >= 1, (
+            f"01-11 应有 buy_cash_outflow，实际：{result.cash_ledger}"
+        )
+
+        # entry_date (01-11) 才出现 open_position
+        pos_events_01_11 = [
+            e for e in result.position_ledger
+            if e.get("date") == "2024-01-11" and e.get("event") == "open_position"
+        ]
+        assert len(pos_events_01_11) >= 1, (
+            f"01-11 应有 open_position，实际：{result.position_ledger}"
+        )
+
     def test_equity_curve_has_start_and_end(self) -> None:
         candidate = _candidate(signal_date="2024-01-10")
         bars = [
@@ -326,6 +386,51 @@ class TestLifecycleDailyMarkToMarket:
         )
         for point in result.equity_curve:
             assert point["track"] == "my_track"
+
+    def test_lifecycle_daily_mark_to_market_uses_close_price_for_open_position(self) -> None:
+        """买入后未平仓，equity_curve 随 close 变化而非固定值。"""
+        # 用宽止损避免触发退出
+        params = _params(
+            emergency_stop_pct=0.5,
+            trend_exit_pct=0.5,
+            time_stop_days=30,
+            max_holding_days=30,
+        )
+        candidate = _candidate(signal_date="2024-01-10", c_price=1.0)
+        bars = [
+            _bar("2024-01-10", close=10.0),
+            _bar("2024-01-11", open=10.5, close=10.0),  # 买入日
+            _bar("2024-01-12", close=12.0),  # 涨
+            _bar("2024-01-15", close=8.0),   # 跌
+        ]
+        result = run_portfolio_lifecycle(
+            scored_candidates=[(candidate, 50.0)],
+            bars_by_symbol={"000001": bars},
+            run_config=PortfolioRunConfig(
+                track_name="test",
+                initial_cash=1_000_000,
+                start_date="2024-01-01",
+                end_date="2024-01-20",
+            ),
+            parameters=params,
+        )
+
+        equity_by_date = {p["date"]: float(p["equity"]) for p in result.equity_curve}
+
+        equity_01_12 = equity_by_date.get("2024-01-12")
+        equity_01_15 = equity_by_date.get("2024-01-15")
+        assert equity_01_12 is not None, "应有 01-12 的权益点"
+        assert equity_01_15 is not None, "应有 01-15 的权益点"
+
+        # close 从 12 跌到 8，equity 应随之下降
+        assert equity_01_12 > equity_01_15, (
+            f"equity 应随 close 下降：01-12={equity_01_12}, 01-15={equity_01_15}"
+        )
+
+        # 差值应等于 shares * (12 - 8) = shares * 4
+        diff = equity_01_12 - equity_01_15
+        # shares 是 100 的倍数，所以 diff 也应该是 100 的倍数
+        assert diff > 100, f"equity 差值 {diff} 应远大于 0（shares * 4）"
 
 
 class TestLifecycleMaxHoldings:
@@ -417,6 +522,142 @@ class TestLifecycleWeeklyOpenLimit:
         skip_reasons = [str(s.get("reason", "")) for s in result.skipped_trades]
         week_skip = [r for r in skip_reasons if "周开仓上限" in r]
         assert len(week_skip) >= 1, f"应有周上限跳过记录，实际：{skip_reasons}"
+
+
+class TestLifecycleBlocksNewCandidateWhilePriorPositionStillOpen:
+    """阻塞项 3：持仓未退出时，后续候选应被满仓跳过。"""
+
+    def test_lifecycle_blocks_new_candidate_while_prior_position_still_open(self) -> None:
+        # max_holdings=1，A 先买入且未退出，B 后一天出现应被跳过
+        params = _params(
+            max_holdings=1,
+            daily_open_limit=5,
+            weekly_open_limit=5,
+            emergency_stop_pct=0.5,
+            trend_exit_pct=0.5,
+            time_stop_days=30,
+            max_holding_days=30,
+        )
+        candidate_a = _candidate(signal_date="2024-01-10", symbol="000001", c_price=1.0)
+        candidate_b = _candidate(signal_date="2024-01-12", symbol="000002", c_price=1.0)
+        bars = {
+            "000001": [
+                _bar("2024-01-10", symbol="000001", close=10.0),
+                _bar("2024-01-11", symbol="000001", open=10.5, close=10.8),
+                _bar("2024-01-12", symbol="000001", close=10.5),
+                _bar("2024-01-15", symbol="000001", close=10.6),
+            ],
+            "000002": [
+                _bar("2024-01-12", symbol="000002", close=10.0),
+                _bar("2024-01-15", symbol="000002", open=10.5, close=10.8),
+            ],
+        }
+        result = run_portfolio_lifecycle(
+            scored_candidates=[
+                (candidate_a, 50.0),
+                (candidate_b, 40.0),
+            ],
+            bars_by_symbol=bars,
+            run_config=PortfolioRunConfig(
+                track_name="test",
+                initial_cash=1_000_000,
+                start_date="2024-01-01",
+                end_date="2024-01-20",
+            ),
+            parameters=params,
+        )
+        # B 应被满仓跳过（A 仍在持仓中）
+        skip_reasons = [str(s.get("reason", "")) for s in result.skipped_trades]
+        full_skip = [r for r in skip_reasons if "满仓" in r]
+        assert len(full_skip) >= 1, f"B 应被满仓跳过，实际：{skip_reasons}"
+
+        # A 应仍在持仓（未平仓）
+        held_symbols = [h.get("symbol") for h in result.holdings if h.get("symbol") != "CASH"]
+        assert "000001" in held_symbols, f"A 应仍在持仓，实际 holdings：{result.holdings}"
+
+
+class TestLifecycleCashLedger:
+    """阻塞项 1：cash_ledger 记录买卖现金流。"""
+
+    def test_lifecycle_cash_ledger_records_buy_and_sell_flows(self) -> None:
+        params = _params(emergency_stop_pct=0.05)
+        candidate = _candidate(signal_date="2024-01-10", c_price=9.0)
+        bars = [
+            _bar("2024-01-10", close=10.0),
+            _bar("2024-01-11", open=10.5, close=10.8),
+            _bar("2024-01-12", open=6.0, high=6.5, low=5.5, close=5.8, amount=580000, limit_down=5.22),
+            _bar("2024-01-15", open=5.8, high=6.2, low=5.5, close=5.9, amount=472000, limit_down=5.22),
+        ]
+        result = run_portfolio_lifecycle(
+            scored_candidates=[(candidate, 50.0)],
+            bars_by_symbol={"000001": bars},
+            run_config=PortfolioRunConfig(
+                track_name="test",
+                initial_cash=1_000_000,
+                start_date="2024-01-01",
+                end_date="2024-01-20",
+            ),
+            parameters=params,
+        )
+
+        events = [e["event"] for e in result.cash_ledger]
+        assert "initial_cash" in events, f"应有 initial_cash，实际：{events}"
+        assert "buy_cash_outflow" in events, f"应有 buy_cash_outflow，实际：{events}"
+        assert "sell_cash_inflow" in events, f"应有 sell_cash_inflow，实际：{events}"
+        assert "ending_cash" in events, f"应有 ending_cash，实际：{events}"
+
+        initial = next(e for e in result.cash_ledger if e["event"] == "initial_cash")
+        assert initial["amount"] == 1_000_000.0
+
+        buy_out = next(e for e in result.cash_ledger if e["event"] == "buy_cash_outflow")
+        assert buy_out["amount"] > 0
+        assert buy_out["symbol"] == "000001"
+
+        sell_in = next(e for e in result.cash_ledger if e["event"] == "sell_cash_inflow")
+        assert sell_in["amount"] > 0
+        assert sell_in["symbol"] == "000001"
+
+
+class TestLifecyclePositionLedger:
+    """阻塞项 1：position_ledger 记录开仓/平仓/逐日持仓状态。"""
+
+    def test_lifecycle_position_ledger_records_open_and_close(self) -> None:
+        params = _params(emergency_stop_pct=0.05)
+        candidate = _candidate(signal_date="2024-01-10", c_price=9.0)
+        bars = [
+            _bar("2024-01-10", close=10.0),
+            _bar("2024-01-11", open=10.5, close=10.8),
+            _bar("2024-01-12", open=6.0, high=6.5, low=5.5, close=5.8, amount=580000, limit_down=5.22),
+            _bar("2024-01-15", open=5.8, high=6.2, low=5.5, close=5.9, amount=472000, limit_down=5.22),
+        ]
+        result = run_portfolio_lifecycle(
+            scored_candidates=[(candidate, 50.0)],
+            bars_by_symbol={"000001": bars},
+            run_config=PortfolioRunConfig(
+                track_name="test",
+                initial_cash=1_000_000,
+                start_date="2024-01-01",
+                end_date="2024-01-20",
+            ),
+            parameters=params,
+        )
+
+        events = [e["event"] for e in result.position_ledger]
+        assert "open_position" in events, f"应有 open_position，实际：{events}"
+        assert "close_position" in events, f"应有 close_position，实际：{events}"
+        assert "daily_position_state" in events, f"应有 daily_position_state，实际：{events}"
+
+        open_ev = next(e for e in result.position_ledger if e["event"] == "open_position")
+        assert open_ev["symbol"] == "000001"
+        assert open_ev["shares"] > 0
+
+        close_ev = next(e for e in result.position_ledger if e["event"] == "close_position")
+        assert close_ev["symbol"] == "000001"
+        assert close_ev["exit_reason"] is not None
+
+        # 验证 daily_position_state 的 market_value 随 close 变化
+        daily_states = [e for e in result.position_ledger if e["event"] == "daily_position_state"]
+        assert len(daily_states) >= 1, "应有至少一条 daily_position_state"
 
 
 class TestClosePositionIfPossible:

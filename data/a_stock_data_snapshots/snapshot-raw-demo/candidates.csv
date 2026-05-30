@@ -1,0 +1,2 @@
+﻿signal_date,track,symbol,industry_level2,is_strong_mainline,a_date,a_price,b_date,b_price,c_date,c_price,ab_gain_pct,bc_retracement_pct,distance_to_c_low_pct,weekly_filter_passed,annual_filter_passed,score,audit_note
+2024-01-24,mainline_filtered,000001,电子,true,2024-01-04,8.0000,2024-01-15,12.0000,2024-01-22,10.2000,50.00,45.00,4.90,true,true,70.10,raw snapshot candidate generated with as-of data

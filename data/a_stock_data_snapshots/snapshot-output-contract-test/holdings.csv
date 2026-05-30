@@ -1,0 +1,3 @@
+﻿date,track,symbol,shares,cost_basis,market_value,unrealized_pnl,holding_days,highest_close_since_entry,audit_note
+2024-01-04,mainline_filtered,000001.SZ,10000,102051.00,107600.00,5549.00,2,10.76,fixture position snapshot before exit trigger
+2024-01-05,portfolio,CASH,0,0,1034200.0,0,0,0,fixture ending cash after closed trade

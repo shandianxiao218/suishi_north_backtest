@@ -1,0 +1,2 @@
+﻿trade_id,track,symbol,entry_signal_date,entry_date,entry_price,entry_shares,exit_trigger_date,exit_date,exit_price,exit_reason,commission,stamp_tax,slippage_cost,total_cost,gross_pnl,net_pnl,first_target_achieved,audit_note
+FTR-0001,mainline_filtered,000001.SZ,2024-01-02,2024-01-03,10.2051,10000,2024-01-05,2024-01-08,10.7956,trend_exit,62.99,53.98,105.00,221.97,5905.00,5683.03,true,deterministic fixture trade with T+1 open execution and cost accounting

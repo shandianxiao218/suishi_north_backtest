@@ -1,0 +1,5 @@
+{
+  "data_version": "output-contract-test-v1",
+  "parameter_set": "ADR-0002 defaults",
+  "universe": "沪深 A 股核心股票池"
+}
