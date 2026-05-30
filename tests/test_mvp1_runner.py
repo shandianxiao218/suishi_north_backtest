@@ -232,6 +232,74 @@ def test_raw_runner_benchmark_comparison_uses_sample_windows(
     assert all_benchmarks == {"CSI300", "CSI500", "CSI1000"}
 
 
+def test_raw_runner_benchmark_comparison_has_all_columns_for_all_benchmarks(
+    tmp_path: Path,
+) -> None:
+    """benchmark_comparison.csv 对三个基准都包含所有必需的指标列。
+
+    Issue #49 要求：runner 级测试覆盖 CSI300、CSI500、CSI1000 三个基准的新增指标列。
+    """
+    snapshot_dir = tmp_path / "raw-snapshot"
+    snapshot_dir.mkdir()
+    _build_raw_snapshot(snapshot_dir)
+
+    config = _make_config(snapshot_dir, tmp_path / "output")
+    data_set = run_mvp1_from_raw_snapshot(snapshot_dir, config)
+
+    # 所有必需列
+    required_columns = {
+        "period",
+        "benchmark",
+        "strategy_return",
+        "strategy_max_drawdown",
+        "strategy_annualized_return",
+        "strategy_volatility",
+        "strategy_win_rate",
+        "strategy_trade_count",
+        "strategy_return_drawdown_ratio",
+        "benchmark_return",
+        "benchmark_max_drawdown",
+        "benchmark_annualized_return",
+        "benchmark_volatility",
+        "benchmark_return_drawdown_ratio",
+        "excess_return",
+        "benchmark_status",
+        "audit_note",
+    }
+
+    # 检查三个基准的每一行都包含所有必需列
+    for benchmark in ("CSI300", "CSI500", "CSI1000"):
+        benchmark_rows = [
+            row for row in data_set.benchmark_comparison
+            if row["benchmark"] == benchmark
+        ]
+        assert len(benchmark_rows) == 3, f"{benchmark} 应该有 3 个 period 的行"
+        for row in benchmark_rows:
+            assert required_columns <= set(row.keys()), (
+                f"{benchmark} 的行缺少列: {required_columns - set(row.keys())}"
+            )
+            # 检查策略侧指标列
+            assert row["strategy_return"] is not None
+            assert row["strategy_max_drawdown"] is not None
+            assert row["strategy_annualized_return"] is not None
+            assert row["strategy_volatility"] is not None
+            assert row["strategy_win_rate"] is not None
+            assert row["strategy_trade_count"] is not None
+            assert row["strategy_return_drawdown_ratio"] is not None
+            # 检查基准侧指标列
+            assert row["benchmark_return"] is not None
+            assert row["benchmark_max_drawdown"] is not None
+            assert row["benchmark_annualized_return"] is not None
+            assert row["benchmark_volatility"] is not None
+            assert row["benchmark_return_drawdown_ratio"] is not None
+            # 检查其他列
+            assert row["excess_return"] is not None
+            assert row["benchmark_status"] in ("ok", "missing", "insufficient_data")
+            assert "window=[" in str(row["audit_note"])
+
+
+
+
 def test_raw_runner_can_write_mvp1_output_dir(tmp_path: Path) -> None:
     """raw runner 能写标准 MVP-1 输出目录，所有文件存在且 metadata 一致。"""
     snapshot_dir = tmp_path / "raw-snapshot"
