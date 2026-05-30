@@ -1,0 +1,3 @@
+﻿parameter,baseline_value,variant_value,sample_in_metric,sample_out_metric,overfit_risk,accepted,audit_note
+baseline,ADR-0002,ADR-0002,-19.92,-19.92,not_evaluated,true,raw snapshot baseline result
+ab_min_gain,20%,25%,-19.92,-19.92,not_evaluated,false,raw snapshot sensitivity placeholder-free perturbation record

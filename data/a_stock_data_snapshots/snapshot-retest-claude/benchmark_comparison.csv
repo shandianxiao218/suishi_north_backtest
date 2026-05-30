@@ -1,0 +1,10 @@
+﻿period,benchmark,strategy_return,benchmark_return,excess_return,max_drawdown,return_drawdown_ratio,audit_note
+sample_in,CSI300,3.42,1.10,2.32,1.25,2.74,deterministic fixture benchmark comparison
+sample_in,CSI500,3.42,1.80,1.62,1.25,2.74,deterministic fixture benchmark comparison
+sample_in,CSI1000,3.42,2.40,1.02,1.25,2.74,deterministic fixture benchmark comparison
+sample_out,CSI300,3.42,1.10,2.32,1.25,2.74,deterministic fixture benchmark comparison
+sample_out,CSI500,3.42,1.80,1.62,1.25,2.74,deterministic fixture benchmark comparison
+sample_out,CSI1000,3.42,2.40,1.02,1.25,2.74,deterministic fixture benchmark comparison
+recent,CSI300,3.42,1.10,2.32,1.25,2.74,deterministic fixture benchmark comparison
+recent,CSI500,3.42,1.80,1.62,1.25,2.74,deterministic fixture benchmark comparison
+recent,CSI1000,3.42,2.40,1.02,1.25,2.74,deterministic fixture benchmark comparison

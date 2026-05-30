@@ -15,6 +15,7 @@ from suishi_north_backtest.lifecycle import (
 )
 from suishi_north_backtest.mainline import MainlineStatus, compute_mainlines
 from suishi_north_backtest.market_data import MarketData, StockDaily, load_market_data
+from suishi_north_backtest.metrics import build_benchmark_comparison_rows
 from suishi_north_backtest.parameters import StrategyParameters, default_mvp1_parameters
 from suishi_north_backtest.raw_data import validate_raw_snapshot
 from suishi_north_backtest.scoring import ScoringContext, ScoreBreakdown, score_candidate
@@ -198,10 +199,13 @@ def run_mvp1_from_raw_snapshot(
         skipped_trades=all_skipped,
         candidates=candidate_rows,
         holdings=all_holdings,
-        benchmark_comparison=_benchmark_rows(
-            market_data=market_data,
-            strategy_return=total_return,
-            max_drawdown=max_drawdown,
+        benchmark_comparison=build_benchmark_comparison_rows(
+            equity_curve=primary_equity,
+            index_daily=market_data.index_daily,
+            as_of=as_of,
+            trades=_trade_rows(all_trades),
+            required_benchmarks=REQUIRED_BENCHMARKS,
+            required_periods=REQUIRED_PERIODS,
         ),
         track_comparison=_real_track_rows(ps_trades, ps_return, mf_trades, mf_return),
         sensitivity=_sensitivity_rows(total_return),

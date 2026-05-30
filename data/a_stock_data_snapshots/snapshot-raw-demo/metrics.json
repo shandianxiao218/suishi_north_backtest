@@ -1,0 +1,43 @@
+{
+  "name": "mvp1-raw-run",
+  "initial_cash": 1000000,
+  "ending_equity": 800820.75,
+  "total_return": -0.199179,
+  "max_drawdown": 0.199179,
+  "profit_factor": 0.0,
+  "win_rate": 0.0,
+  "trade_count": 0,
+  "candidate_count": 1,
+  "skipped_count": 0,
+  "tracks": {
+    "pure_structure": {
+      "trade_count": 0,
+      "total_return": -0.199179
+    },
+    "mainline_filtered": {
+      "trade_count": 0,
+      "total_return": -0.199179
+    }
+  },
+  "benchmarks": [
+    "CSI300",
+    "CSI500",
+    "CSI1000"
+  ],
+  "sample_windows": {
+    "sample_in": [
+      "2018-01-01",
+      "2022-12-31"
+    ],
+    "sample_out": [
+      "2023-01-01",
+      "2024-02-20"
+    ],
+    "recent": [
+      "2024-01-01",
+      "2024-02-20"
+    ]
+  },
+  "audit_note": "raw snapshot generated MVP-1 dataset",
+  "research_limitation": "MVP-1 是日线代理研究系统，不等同于完整实盘交易系统。"
+}
